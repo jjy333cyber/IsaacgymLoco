@@ -21,6 +21,10 @@
   - `cd rsl_rl && pip install -e .`
   - `cd ../legged_gym && pip install -e .`
 
+5. Install LidarSensor
+
+- `cd LidarSensor && pip install -e .`
+
 ### Usage
 1. Train a policy:
 * flat terrain
