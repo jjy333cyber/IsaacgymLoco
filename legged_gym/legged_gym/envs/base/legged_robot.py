@@ -1536,8 +1536,27 @@ class LeggedRobot(BaseTask):
         translation = trimesh.transformations.translation_matrix(transform)
         terrain_mesh.apply_transform(translation)
 
-        vertices = terrain_mesh.vertices
-        triangles = terrain_mesh.faces
+        if self.cfg.lidar.consider_self_occlusion:
+            # add obstacles for self-occlusion
+            robots_resource_dir = os.path.join(LEGGED_GYM_ROOT_DIR, "resources", "robots", "aliengo")
+            robot_path = os.path.join(robots_resource_dir, "robot_combined.stl")
+
+            robot_mesh = trimesh.load(robot_path)
+            transaltion = np.zeros((3,))
+            transaltion[0] = self.root_states[0, 0]
+            transaltion[1] = self.root_states[0, 1]
+            transaltion[2] = self.root_states[0, 2]
+            translation = trimesh.transformations.translation_matrix(transaltion)
+            robot_mesh.apply_transform(translation)
+
+            combined_mesh = trimesh.util.concatenate([terrain_mesh, robot_mesh])
+            # save combined mesh
+            combined_mesh.export(os.path.join(robots_resource_dir, "robot_terrain_combined.stl"))
+        else:
+            combined_mesh = terrain_mesh
+
+        vertices = combined_mesh.vertices
+        triangles = combined_mesh.faces
         vertex_tensor = torch.tensor(
             vertices,
             device=self.device,

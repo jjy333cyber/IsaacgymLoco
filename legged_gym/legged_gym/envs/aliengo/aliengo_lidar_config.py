@@ -143,7 +143,8 @@ class AlienGoFlatLidarCfg(LeggedRobotCfg):
         thickness = 0.01
 
     class lidar:
-        use_lidar = True
+        use_lidar: bool = True
+        consider_self_occlusion: bool = False
         # save_data = False
         # save_interval = 1
 
@@ -158,7 +159,7 @@ class AlienGoFlatLidarCfg(LeggedRobotCfg):
         random_distance_noise: float = 0.02
         pixel_dropout_prob: float = 0.01
 
-        nominal_position: list = [0.10, 0.0, 0.082]  # 根据mesh结合验证过的位置
+        nominal_position: list = [0.10, 0.0, 0.082]  # 根据mesh结合验证过的位置 (需和urd中的位置保持一致)
         nominal_orientation_euler_deg: list = [0., 0., 0.]
         randomize_placement: bool = False  # 为 True 时暂时不起作用
 
