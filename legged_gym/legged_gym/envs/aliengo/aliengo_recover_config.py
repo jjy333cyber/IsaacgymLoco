@@ -126,7 +126,7 @@ class AlienGoRoughRecoverCfg( AlienGoRoughCfg ):
             torque_limits = -0.0
             dof_vel = -0.0
             dof_acc = -2.5e-7
-            stand_nice = -0.1    # commands 速度接近0（<0.1 m/s）且 重力投影向下时 的 关节位置与默认关节位置的 偏差 惩罚
+            stand_nice = -0.1  # (base原地不动 或 原地旋转) 且 重力投影向下时 的 关节位置与默认关节位置的 偏差 惩罚
             hip_pos_up = -0.3
             thigh_pose_up = -0.05
             calf_pose_up = -0.05
@@ -148,6 +148,7 @@ class AlienGoRoughRecoverCfg( AlienGoRoughCfg ):
             feet_slide_up = -0.01
             foot_clearance_base_up = -0.1
             foot_clearance_base_terrain = -0.0
+            feet_yaw_clearance_terrain = 1.0  # (base原地旋转) 时 脚抬起
             stuck = -0.05
             upward = 1.0  # 摔倒恢复训练时可开启
 

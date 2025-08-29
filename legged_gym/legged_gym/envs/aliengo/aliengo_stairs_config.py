@@ -206,6 +206,7 @@ class AlienGoStairsCfg( AlienGoRoughCfg ):
             feet_slide = -0.0
             foot_clearance_base = -0.0
             foot_clearance_base_terrain = -0.0
+            feet_yaw_clearance_terrain = 1.0  # (base原地旋转) 时 脚抬起
             stuck = -1.
             upward = 0.0
 

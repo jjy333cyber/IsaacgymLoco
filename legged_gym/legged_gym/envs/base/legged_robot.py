@@ -278,7 +278,7 @@ class LeggedRobot(BaseTask):
         self.feet_pos = self.rigid_body_states.view(self.num_envs, self.num_bodies, 13)[:, self.feet_indices, 0:3]
         self.feet_vel = self.rigid_body_states.view(self.num_envs, self.num_bodies, 13)[:, self.feet_indices, 7:10]
 
-        # 四足的 接触力
+        # 四足的 接触力 是否 > 1，来判断是否接触地面
         contact = self.contact_forces[:, self.feet_indices, 2] > 1.
         self.contact_filt = torch.logical_or(contact, self.last_contacts)
         self.last_contacts = contact
@@ -696,7 +696,7 @@ class LeggedRobot(BaseTask):
         if self.cfg.commands.heading_command:
             forward = quat_apply(self.base_quat, self.forward_vec)  # 当前base的前进方向（世界坐标系）(num_envs, 3)
             heading = torch.atan2(forward[:, 1], forward[:, 0])  # 当前base的前进方向的 航向角
-            # 命令的角速度 = 0.5 * (目标航向 - 当前航向)==> 裁剪到[-2, 2]
+            # 命令的角速度 = 0.5 * (目标航向 - 当前航向)[-pi, pi] ==> 裁剪到[-2, 2]
             self.commands[:, 2] = torch.clip(0.5 * wrap_to_pi(self.commands[:, 3] - heading), -2., 2.)
 
         # 3. 计算采样点的高度
@@ -1499,32 +1499,33 @@ class LeggedRobot(BaseTask):
             [type]: [description]
         """
         if self.cfg.terrain.mesh_type == 'plane':
-            return self.feet_pos[:, :, 2].clone()
+            return self.feet_pos[:, :, 2].clone()  # 四足的 高度 (num_envs, 4, 1)
         elif self.cfg.terrain.mesh_type == 'none':
             raise NameError("Can't measure height with terrain mesh type 'none'")
 
         if env_ids:
             points = self.feet_pos[env_ids].clone()
         else:
-            points = self.feet_pos.clone()
+            points = self.feet_pos.clone()  # 四足的位置 (num_envs, 4, 3)
 
-        points += self.terrain.cfg.border_size
-        points = (points/self.terrain.cfg.horizontal_scale).long()
+        # 测量 四足位置下方的 地形高度
+        points += self.terrain.cfg.border_size  # + 边界的偏移 25
+        points = (points / self.terrain.cfg.horizontal_scale).long()  # / 0.1，归一化到地形网格坐标
         px = points[:, :, 0].view(-1)
         py = points[:, :, 1].view(-1)
         px = torch.clip(px, 0, self.height_samples.shape[0]-2)
         py = torch.clip(py, 0, self.height_samples.shape[1]-2)
 
         heights1 = self.height_samples[px, py]
-        heights2 = self.height_samples[px+1, py]
-        heights3 = self.height_samples[px, py+1]
+        heights2 = self.height_samples[px + 1, py]
+        heights3 = self.height_samples[px, py + 1]
         # heights = torch.min(heights1, heights2)
         # heights = torch.min(heights, heights3)
         heights = (heights1 + heights2 + heights3) / 3
 
-        heights = heights.view(self.num_envs, -1) * self.terrain.cfg.vertical_scale
+        ground_heights = heights.view(self.num_envs, -1) * self.terrain.cfg.vertical_scale  # 地形高度 转换为 实际的米单位 (num_evns, 4)
 
-        feet_height =  self.feet_pos[:, :, 2] - heights
+        feet_height = self.feet_pos[:, :, 2] - ground_heights  # 四足相对地形的 高度
 
         return feet_height
 
@@ -1655,7 +1656,7 @@ class LeggedRobot(BaseTask):
 
     # ------------ reward functions ------------
     def _reward_tracking_lin_vel(self):
-        # 奖励 跟踪 commands 中XY方向的 线速度
+        # 奖励 跟踪 commands 中XY方向的 线速度 (>= 0.1m/s时)
         small_commands = torch.norm(self.commands[:, :2], dim=1) < 0.1
         track_commands = self.commands[:, :2] * (~small_commands.unsqueeze(-1))
         lin_vel_error = torch.sum(
@@ -1670,7 +1671,7 @@ class LeggedRobot(BaseTask):
         return torch.exp(-ang_vel_error/self.cfg.rewards.tracking_sigma)
 
     def _reward_feet_air_time(self):
-        # 奖励 四足的空中时间接近0.5s (2Hz)
+        # 奖励 四足的空中时间接近0.5s (原地不动时除外)
         # 需过滤接触力信号，因为PhysX引擎在复杂地形上接触力检测不可靠
         contact = self.contact_forces[:, self.feet_indices, 2] > 1.  # 检测z轴力 > 1N 的接触
         contact_filt = torch.logical_or(contact, self.last_contacts)  # 当前帧和上一帧的 有1次触地即可
@@ -1678,7 +1679,9 @@ class LeggedRobot(BaseTask):
         first_contact = (self.feet_air_time > 0.) * contact_filt  # 只考虑从空中首次触地的情况
         self.feet_air_time += self.dt  # 累加 policy 步长（0.02s）
         rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1)  # 仅奖励第一次触地，且计算与目标时间0.5s的偏差奖励
-        rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1  # commands线速度 > 0.1 时才奖励
+        condition = (torch.norm(self.commands[:, :2], dim=1) > 0.1) | (
+                    torch.abs(self.commands[:, 2]) > 0.05)  # commands XY方向线速度 > 0.1m/s 或 yaw方向角速度 > 0.05rad/s 时才奖励
+        rew_airTime *= condition.float()
         self.feet_air_time *= ~contact_filt  # 当前帧 触地的足 空中时间清0
         return rew_airTime
 
@@ -1687,9 +1690,10 @@ class LeggedRobot(BaseTask):
         return 1 - self.projected_gravity[:, 2]
 
     def _reward_has_contact(self):
-        # 奖励 速度<0.1时 的 四足接触力
+        # 奖励 (base 原地不动) 时的 四足触地个数
         contact_filt = 1. * self.contact_filt
-        return (torch.norm(self.commands[:, :2], dim=1) < 0.1) * torch.sum(contact_filt, dim=-1) / 4
+        condition = (torch.norm(self.commands[:, :2], dim=1) < 0.1) & (torch.abs(self.commands[:, 2]) < 0.05)
+        return condition.float() * torch.sum(contact_filt, dim=-1) / 4
 
     # ------------ penalty functions ------------
     def _reward_lin_vel_z(self):
@@ -1699,7 +1703,7 @@ class LeggedRobot(BaseTask):
         return torch.square(self.base_lin_vel[:, 2]) * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
     
     def _reward_ang_vel_xy(self):
-        # 惩罚 base 的 XY 轴角速度（roll, pitch, 防止翻滚）
+        # 惩罚 base 的 roll, pitch 轴角速度, 防止翻滚
         return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1)
     def _reward_ang_vel_xy_up(self):
         return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1) * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
@@ -1861,17 +1865,29 @@ class LeggedRobot(BaseTask):
 
     # --- stand, stuck ---
     def _reward_stand_still(self):
-        # 惩罚 commands 速度接近0（<0.1 m/s）时的 关节位置与默认关节位置的 偏差
-        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < 0.1)
+        # 惩罚 (base原地不动 或 原地旋转) 时的 关节位置与默认关节位置的 偏差
+        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1  # commands 中XY方向线速度 < 0.1 m/s (不论角速度大小，都会受到惩罚)
+        dof_deviation = torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)
+        return dof_deviation * condition.float()
 
     def _reward_stand_nice(self):
-        # 惩罚 commands 速度接近0（<0.1 m/s）且 重力投影向下时 的 关节位置与默认关节位置的 偏差
-        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < 0.1) * (1 - self.projected_gravity[:,2])
+        # 惩罚 (base原地不动 或 原地旋转) 且 重力投影向下时 的 关节位置与默认关节位置的 偏差
+        condition = (torch.norm(self.commands[:, :2], dim=1) < 0.1) * (1 - self.projected_gravity[:, 2])
+        dof_deviation = torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)
+        return dof_deviation * condition.float()
 
     def _reward_stuck(self):
         # 惩罚 卡住
-        # 判定是否卡住：base 的 X方向线速度 < 0.1 m/s，但 commands 的 X方向线速度 > 0.1 m/s
-        return (torch.abs(self.base_lin_vel[:, 0]) < 0.1) * (torch.abs(self.commands[:, 0]) > 0.1)
+        # 判断是否卡住：
+        #   base 的 (XY方向线速度 < 0.1 m/s 且 yaw方向角速度 < 0.1 rad/s)
+        small_lin_vel = torch.norm(self.base_lin_vel[:, :2], dim=1) < 0.1
+        small_ang_vel = torch.abs(self.base_ang_vel[:, 2]) < 0.1
+        stuck = small_lin_vel & small_ang_vel
+        #   但 commands 的 线速度 > 0.1 m/s 或 角速度 > 0.1 rad/s
+        large_lin_commands = torch.norm(self.commands[:, :2], dim=1) > 0.1
+        large_ang_commands = torch.abs(self.commands[:, 2]) > 0.1
+        large_commands = large_lin_commands | large_ang_commands
+        return stuck * large_commands
 
     # --- joint pose deviation ---
     def _reward_hip_action_magnitude(self):
@@ -1880,23 +1896,40 @@ class LeggedRobot(BaseTask):
                                                     torch.zeros_like(self.actions[:, [0, 3, 6, 9]]))), dim=1)
 
     def _reward_hip_pos(self):
-        # 惩罚 髋关节hip（0,3,6,9）与默认位置的偏差
-        return torch.sum(torch.abs(self.dof_pos[:, [0,3,6,9]] - self.default_dof_pos[:, [0,3,6,9]]), dim=1)
+        # 惩罚 hip关节（0,3,6,9）与默认位置的 偏差， (原地不动 或 原地旋转) 时惩罚系数为 5.0，其他为 1.0
+        hip_deviation = torch.sum(torch.abs(self.dof_pos[:, [0, 3, 6, 9]] - self.default_dof_pos[:, [0, 3, 6, 9]]), dim=1)
+        #   XY方向线速度 < 0.1 m/s (不论角速度大小，都会受到惩罚) 时，惩罚力度为 5.0
+        #   XY方向线速度 >= 0.1 m/s 时，惩罚力度为 1.0
+        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1
+        multiplier = 1.0 + condition.float() * 4.0
+        return hip_deviation * multiplier
     def _reward_hip_pos_up(self):
-        return (torch.sum(torch.abs(self.dof_pos[:, [0, 3, 6, 9]] - self.default_dof_pos[:, [0, 3, 6, 9]]), dim=1)
-                * torch.clamp(-self.projected_gravity[:, 2], 0, 1))
+        hip_deviation = torch.sum(torch.abs(self.dof_pos[:, [0, 3, 6, 9]] - self.default_dof_pos[:, [0, 3, 6, 9]]), dim=1)
+        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1
+        multiplier = 1.0 + condition.float() * 4.0
+        return hip_deviation * multiplier * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
 
     def _reward_thigh_pose(self):
-        return torch.sum(torch.abs(self.dof_pos[:, [1,4,7,10]] - self.default_dof_pos[:, [1,4,7,10]]), dim=1)
+        thigh_deviation = torch.sum(torch.abs(self.dof_pos[:, [1, 4, 7, 10]] - self.default_dof_pos[:, [1, 4, 7, 10]]), dim=1)
+        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1
+        multiplier = 1.0 + condition.float() * 4.0
+        return thigh_deviation * multiplier
     def _reward_thigh_pose_up(self):
-        return (torch.sum(torch.abs(self.dof_pos[:, [1,4,7,10]] - self.default_dof_pos[:, [1,4,7,10]]), dim=1)
-                * torch.clamp(-self.projected_gravity[:, 2], 0, 1))
+        thigh_deviation = torch.sum(torch.abs(self.dof_pos[:, [1, 4, 7, 10]] - self.default_dof_pos[:, [1, 4, 7, 10]]), dim=1)
+        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1
+        multiplier = 1.0 + condition.float() * 4.0
+        return thigh_deviation * multiplier * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
 
     def _reward_calf_pose(self):
-        return torch.sum(torch.abs(self.dof_pos[:, [2,5,8,11]] - self.default_dof_pos[:, [2,5,8,11]]), dim=1)
+        calf_deviation = torch.sum(torch.abs(self.dof_pos[:, [2, 5, 8, 11]] - self.default_dof_pos[:, [2, 5, 8, 11]]), dim=1)
+        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1
+        multiplier = 1.0 + condition.float() * 4.0
+        return calf_deviation * multiplier
     def _reward_calf_pose_up(self):
-        return (torch.sum(torch.abs(self.dof_pos[:, [2,5,8,11]] - self.default_dof_pos[:, [2,5,8,11]]), dim=1)
-                * torch.clamp(-self.projected_gravity[:, 2], 0, 1))
+        calf_deviation = torch.sum(torch.abs(self.dof_pos[:, [2, 5, 8, 11]] - self.default_dof_pos[:, [2, 5, 8, 11]]), dim=1)
+        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1
+        multiplier = 1.0 + condition.float() * 4.0
+        return calf_deviation * multiplier * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
 
     # --- 四足离地高度 ---
     def _reward_foot_clearance_base(self):
@@ -1985,6 +2018,5 @@ class LeggedRobot(BaseTask):
             ground_heights = torch.reshape(heights, (self.num_envs, -1)) * self.terrain.cfg.vertical_scale  # 地形高度 转换为 实际的米单位 (num_evns, 4)
             foot_heights = self.feet_pos[:, :, 2] - ground_heights  # 四足相对地形的 高度
 
-        foot_lateral_vel = torch.norm(self.feet_vel[:, :, :2], dim = -1)
-        # return torch.sum(foot_lateral_vel * torch.maximum(-foot_heights + self.cfg.rewards.foot_height_target, torch.zeros_like(foot_heights)), dim = -1)
-        return torch.sum(foot_lateral_vel * torch.square(foot_heights - self.cfg.rewards.foot_height_target_terrain), dim = -1) * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
+        height_reward = torch.tanh(mean_foot_height + 0.15)
+        return condition.float() * height_reward
