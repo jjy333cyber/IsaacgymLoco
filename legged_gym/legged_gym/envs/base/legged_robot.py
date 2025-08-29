@@ -1932,7 +1932,7 @@ class LeggedRobot(BaseTask):
         return calf_deviation * multiplier * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
 
     # --- 四足离地高度 ---
-    def _reward_foot_clearance_base(self):
+    def _reward_feet_clearance_base(self):
         # 惩罚 大速度下 四足抬脚距base的高度 偏离目标距离 （-0.2 m）（摔倒时不计算）
         # 当前四足相对base的 位置 和 线速度（世界坐标系）
         cur_footpos_translated = self.feet_pos - self.root_states[:, 0:3].unsqueeze(1)
@@ -1945,11 +1945,12 @@ class LeggedRobot(BaseTask):
             footvel_in_body_frame[:, i, :] = quat_rotate_inverse(self.base_quat, cur_footvel_translated[:, i, :])
 
         # 四足相对base的高度 距 目标高度 的误差（平方误差）
-        height_error = torch.square(footpos_in_body_frame[:, :, 2] - self.cfg.rewards.foot_height_target_base).view(self.num_envs, -1)
+        height_error = torch.square(footpos_in_body_frame[:, :, 2] - self.cfg.rewards.feet_height_target_base).view(self.num_envs, -1)
         # 四足相对base的 线速度 的模
-        foot_leteral_vel = torch.sqrt(torch.sum(torch.square(footvel_in_body_frame[:, :, :2]), dim=2)).view(self.num_envs, -1)
-        return torch.sum(height_error * foot_leteral_vel, dim=1)
-    def _reward_foot_clearance_base_up(self):
+        feet_leteral_vel = torch.sqrt(torch.sum(torch.square(footvel_in_body_frame[:, :, :2]), dim=2)).view(self.num_envs, -1)
+        return torch.sum(height_error * feet_leteral_vel, dim=1)
+
+    def _reward_feet_clearance_base_up(self):
         # 惩罚 大速度下 四足抬脚距base的高度 偏离目标距离 （-0.2 m）（摔倒时不计算）
         # 当前四足相对base的 位置 和 线速度（世界坐标系）
         cur_footpos_translated = self.feet_pos - self.root_states[:, 0:3].unsqueeze(1)
@@ -1962,61 +1963,34 @@ class LeggedRobot(BaseTask):
             footvel_in_body_frame[:, i, :] = quat_rotate_inverse(self.base_quat, cur_footvel_translated[:, i, :])
 
         # 四足相对base的高度 距 目标高度 的误差（平方误差）
-        height_error = torch.square(footpos_in_body_frame[:, :, 2] - self.cfg.rewards.foot_height_target_base).view(self.num_envs, -1)
+        height_error = torch.square(footpos_in_body_frame[:, :, 2] - self.cfg.rewards.feet_height_target_base).view(self.num_envs, -1)
         # 四足相对base的 线速度 的模
-        foot_leteral_vel = torch.sqrt(torch.sum(torch.square(footvel_in_body_frame[:, :, :2]), dim=2)).view(self.num_envs, -1)
-        return torch.sum(height_error * foot_leteral_vel, dim=1) * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
+        feet_leteral_vel = torch.sqrt(torch.sum(torch.square(footvel_in_body_frame[:, :, :2]), dim=2)).view(self.num_envs, -1)
+        return torch.sum(height_error * feet_leteral_vel, dim=1) * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
 
-    def _reward_foot_clearance_terrain(self):
+    def _reward_feet_clearance_terrain(self):
+        # 惩罚 大速度下（同时考虑线速度和角速度） 四足的抬脚高度 需接近 离地目标高度（0.15m）
+        feet_heights = self._get_feet_heights()
+
+        feet_lateral_vel = torch.norm(self.feet_vel[:, :, :2], dim=-1)
+        # return torch.sum(foot_lateral_vel * torch.maximum(-feet_heights + self.cfg.rewards.feet_height_target_terrain, torch.zeros_like(foot_heights)), dim = -1)
+        return torch.sum(feet_lateral_vel * torch.square(feet_heights - self.cfg.rewards.feet_height_target_terrain), dim=-1)
+
+    def _reward_feet_clearance_terrain_up(self):
         # 惩罚 大速度下 四足的抬脚高度 需接近 离地目标高度（0.15m）
-        if self.cfg.terrain.mesh_type == 'plane':
-            foot_heights = self.feet_pos[:, :, 2]  # 四足的 高度 (num_envs, 4, 1)
-        else:
-            points = self.feet_pos  # 四足的位置 (num_envs, 4, 3)
+        feet_heights = self._get_feet_heights()
 
-            # 测量 四足位置下方的 地形高度
-            points += self.terrain.cfg.border_size  # + 边界的偏移 25
-            points = (points / self.terrain.cfg.horizontal_scale).long()  # / 0.1，归一化到地形网格坐标
-            px = points[:, :, 0].view(-1)
-            py = points[:, :, 1].view(-1)
-            px = torch.clip(px, 0, self.height_samples.shape[0] - 2)
-            py = torch.clip(py, 0, self.height_samples.shape[1] - 2)
+        feet_lateral_vel = torch.norm(self.feet_vel[:, :, :2], dim=-1)
+        # return torch.sum(foot_lateral_vel * torch.maximum(-feet_heights + self.cfg.rewards.feet_height_target_terrain, torch.zeros_like(foot_heights)), dim = -1)
+        return torch.sum(feet_lateral_vel * torch.square(feet_heights - self.cfg.rewards.feet_height_target_terrain), dim=-1) * torch.clamp(
+            -self.projected_gravity[:, 2], 0, 1)
 
-            heights1 = self.height_samples[px, py]
-            heights2 = self.height_samples[px + 1, py]
-            heights3 = self.height_samples[px, py + 1]
-            heights = torch.min(heights1, heights2)
-            heights = torch.min(heights, heights3)
+    def _reward_feet_yaw_clearance_terrain(self):
+        # 奖励 (base原地旋转) 时 脚抬起
+        condition = (torch.abs(self.commands[:, 2]) > 0.05) & (torch.norm(self.commands[:, :2], dim=1) < 0.1)
 
-            ground_heights = torch.reshape(heights, (self.num_envs, -1)) * self.terrain.cfg.vertical_scale  # 地形高度 转换为 实际的米单位 (num_evns, 4)
-            foot_heights = self.feet_pos[:, :, 2] - ground_heights  # 四足相对地形的 高度
-
-        foot_lateral_vel = torch.norm(self.feet_vel[:, :, :2], dim = -1)
-        # return torch.sum(foot_lateral_vel * torch.maximum(-foot_heights + self.cfg.rewards.foot_height_target, torch.zeros_like(foot_heights)), dim = -1)
-        return torch.sum(foot_lateral_vel * torch.square(foot_heights - self.cfg.rewards.foot_height_target_terrain), dim = -1)
-    def _reward_foot_clearance_terrain_up(self):
-        # 惩罚 大速度下 四足的抬脚高度 需接近 离地目标高度（0.15m）
-        if self.cfg.terrain.mesh_type == 'plane':
-            foot_heights = self.feet_pos[:, :, 2]  # 四足的 高度 (num_envs, 4, 1)
-        else:
-            points = self.feet_pos  # 四足的位置 (num_envs, 4, 3)
-
-            # 测量 四足位置下方的 地形高度
-            points += self.terrain.cfg.border_size  # + 边界的偏移 25
-            points = (points / self.terrain.cfg.horizontal_scale).long()  # / 0.1，归一化到地形网格坐标
-            px = points[:, :, 0].view(-1)
-            py = points[:, :, 1].view(-1)
-            px = torch.clip(px, 0, self.height_samples.shape[0] - 2)
-            py = torch.clip(py, 0, self.height_samples.shape[1] - 2)
-
-            heights1 = self.height_samples[px, py]
-            heights2 = self.height_samples[px + 1, py]
-            heights3 = self.height_samples[px, py + 1]
-            heights = torch.min(heights1, heights2)
-            heights = torch.min(heights, heights3)
-
-            ground_heights = torch.reshape(heights, (self.num_envs, -1)) * self.terrain.cfg.vertical_scale  # 地形高度 转换为 实际的米单位 (num_evns, 4)
-            foot_heights = self.feet_pos[:, :, 2] - ground_heights  # 四足相对地形的 高度
+        feet_heights = self._get_feet_heights()
+        mean_foot_height = torch.mean(feet_heights, dim=1)
 
         height_reward = torch.tanh(mean_foot_height + 0.15)
         return condition.float() * height_reward

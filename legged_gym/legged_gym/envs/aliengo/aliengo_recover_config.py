@@ -146,8 +146,8 @@ class AlienGoRoughRecoverCfg( AlienGoRoughCfg ):
             has_contact = 0.3  # 摔倒恢复训练时可开启
             feet_stumble_up = -0.0
             feet_slide_up = -0.01
-            foot_clearance_base_up = -0.1
-            foot_clearance_base_terrain = -0.0
+            feet_clearance_base_up = -0.1
+            feet_clearance_terrain_up = -0.0
             feet_yaw_clearance_terrain = 1.0  # (base原地旋转) 时 脚抬起
             stuck = -0.05
             upward = 1.0  # 摔倒恢复训练时可开启
@@ -158,8 +158,8 @@ class AlienGoRoughRecoverCfg( AlienGoRoughCfg ):
         soft_dof_vel_limit = 0.95
         soft_torque_limit = 0.95
         base_height_target = 0.43
-        foot_height_target_base = -0.27
-        foot_height_target_terrain = 0.15
+        feet_height_target_base = -0.27
+        feet_height_target_terrain = 0.15
         max_contact_force = 100.  # forces above this value are penalized
 
     class normalization:

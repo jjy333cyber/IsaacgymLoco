@@ -204,8 +204,8 @@ class AlienGoStairsCfg( AlienGoRoughCfg ):
             has_contact = 0.0
             feet_stumble = -2.0
             feet_slide = -0.0
-            foot_clearance_base = -0.0
-            foot_clearance_base_terrain = -0.0
+            feet_clearance_base = -0.0
+            feet_clearance_terrain = -0.0
             feet_yaw_clearance_terrain = 1.0  # (base原地旋转) 时 脚抬起
             stuck = -1.
             upward = 0.0
@@ -216,8 +216,8 @@ class AlienGoStairsCfg( AlienGoRoughCfg ):
         soft_dof_vel_limit = 0.95
         soft_torque_limit = 0.95
         base_height_target = 0.43
-        foot_height_target_base = -0.27
-        foot_height_target_terrain = 0.15
+        feet_height_target_base = -0.27
+        feet_height_target_terrain = 0.15
         max_contact_force = 100.  # forces above this value are penalized
 
 

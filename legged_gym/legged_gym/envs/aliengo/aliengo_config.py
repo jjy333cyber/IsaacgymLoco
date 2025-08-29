@@ -250,8 +250,8 @@ class AlienGoRoughCfg( LeggedRobotCfg ):
             has_contact = 0.0  # (base 原地不动) 时的 四足触地个数 奖励
             feet_stumble = -0.0  # 四足接触到垂直表面 惩罚
             feet_slide = -0.01  # 脚接触地面具有相对base的速度 惩罚
-            foot_clearance_base = -0.1  # 大速度下 四足距base目标距离 惩罚
-            foot_clearance_base_terrain = -0.0  # 大速度下 四足离地目标高度 惩罚
+            feet_clearance_base = -0.1  # 大速度下 四足距base目标距离 惩罚
+            feet_clearance_terrain = -0.0  # 大速度下 四足离地目标高度 惩罚
             feet_yaw_clearance_terrain = 1.0  # (base原地旋转) 时 脚抬起
             stuck = -0.01  # base 卡住 惩罚
             upward = 0.0  # 重力投影向下 奖励（恢复训练时开启）
@@ -265,9 +265,9 @@ class AlienGoRoughCfg( LeggedRobotCfg ):
         soft_dof_pos_limit = 0.95   # 关节位置软限位：关节角度超过URDF限位95%时触发惩罚。调低（如0.9）可提前约束
         soft_dof_vel_limit = 0.95   # 关节速度软限位：超过最大速度95%时惩罚。保护电机模型不过载
         soft_torque_limit = 0.95    # 关节力矩软限位：超过额定扭矩95%时惩罚。防止仿真数值发散
-        base_height_target = 0.43   # 机身目标高度
-        foot_height_target_base = -0.27  # 足部距base的 相对距离目标（抬脚高度为0.15 以适应台阶地形）
-        foot_height_target_terrain = 0.15  # 足部离地高度目标
+        base_height_target = 0.47  # 机身目标高度
+        feet_height_target_base = -0.32  # 足部距base的 相对距离目标（抬脚高度为0.15 以适应台阶地形）
+        feet_height_target_terrain = 0.15  # 足部离地高度目标
         max_contact_force = 100.    # 四足接触力 > 100N 时触发惩罚的阈值
 
     class normalization:
