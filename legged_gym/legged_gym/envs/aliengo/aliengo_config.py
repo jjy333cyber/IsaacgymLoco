@@ -115,10 +115,10 @@ class AlienGoRoughCfg( LeggedRobotCfg ):
             heading = [-math.pi, math.pi]
 
     class asset( LeggedRobotCfg.asset ):
-        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/aliengo/urdf/aliengo.urdf'
+        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/aliengo/urdf/aliengo_bigAng.urdf'
         name = "aliengo"    # 机器人标识名称
         foot_name = "foot"  # 足部Link名称匹配模式（如"FR_foot"、"FL_foot"等包含"foot"的）
-        penalize_contacts_on = ["thigh", "calf", "base"]    # base, thigh, calf 与地形碰撞，则触发惩罚
+        penalize_contacts_on = ["thigh", "calf"]  # thigh, calf 与地形碰撞，则触发惩罚
         terminate_after_contacts_on = ["base"]      # base 与地形碰撞，则触发终止训练
         privileged_contacts_on = ["base", "thigh", "calf"]  # 特权接触检测区域
         self_collisions = 1  # 1：禁用自身各部分之间的碰撞检测（提升性能）；0：启用
@@ -195,9 +195,9 @@ class AlienGoRoughCfg( LeggedRobotCfg ):
             yaw=[-0.5, 0.5],
         )
 
-        dof_init_pos_ratio_range = [0.5, 1.5]  # 重置时随机改变 关节初始位置（初始关节位置 *），默认为 [0.5, 1.5]
+        dof_init_pos_ratio_range = [0.8, 1.2]  # 重置时随机改变 关节初始位置（初始关节位置 *），默认为 [0.5, 1.5]
 
-        randomize_dof_vel = True  # 重置时设置 关节初始速度
+        randomize_dof_vel = False  # 重置时设置 关节初始速度
         dof_init_vel_range = [-0.1, 0.1]  # 默认为 0.0
 
         # interval
