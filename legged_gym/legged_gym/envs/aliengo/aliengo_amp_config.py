@@ -221,7 +221,7 @@ class AlienGoRoughCfg( LeggedRobotCfg ):
             # general
             termination = -0.0  # 仿真终止时的惩罚：未启用。设为负值（如-10.0）可在跌倒时给予额外惩罚
             # velocity-tracking
-            tracking_lin_vel = 1.5  # commands 中XY方向的 线速度跟踪 奖励，主导前进/后退训练
+            tracking_lin_vel = 1.5  # commands 中XY方向的 线速度跟踪 奖励 (>= 0.1m/s时)
             tracking_ang_vel = 1.5  # commands 中yaw方向的 角速度跟踪 奖励
             # root
             lin_vel_z = -2.0  # base 的 Z 轴线速度 惩罚：防止机身跳跃
@@ -233,8 +233,8 @@ class AlienGoRoughCfg( LeggedRobotCfg ):
             torque_limits = -0.0  # 关节扭矩接近极限 惩罚
             dof_vel = -0.0  # 关节速度过大 惩罚
             dof_acc = -2.5e-7  # 关节加速度 惩罚（若步态抖动，可增大惩罚）
-            stand_still = -0.1  # commands 速度接近0（<0.1 m/s）的 关节位置与默认关节位置的 偏差 惩罚
-            hip_pos = -0.2  # 髋关节hip（0,3,6,9）位置与默认位置的偏差 惩罚
+            stand_still = -0.1  # (base原地不动 或 原地旋转) 时的 关节位置与默认关节位置的 偏差 惩罚
+            hip_pos = -0.2  # hip关节位置与默认位置的 偏差 惩罚，(原地不动 或 原地旋转) 时惩罚系数为 5.0，其他为 1.0
             thigh_pose = -0.05
             calf_pose = -0.05
             # hip_pos = -0.04 if USING_AMP else -0.2
@@ -252,12 +252,13 @@ class AlienGoRoughCfg( LeggedRobotCfg ):
             collision = -0.0  # 指定关节的碰撞 惩罚。检测超过 max_contact_force (100N) 的接触，设为负值（如-0.1）可防硬件过载
             feet_contact_forces = -0.00015  # 四足的接触力 > 100N 惩罚
             # others
-            feet_air_time = 0.25  # 四足的空中时间接近0.5s 奖励
-            has_contact = 0.0  # 速度<0.1时 的 四足触地个数 奖励（恢复训练时开启）
+            feet_air_time = 0.25  # 四足的空中时间接近0.5s 奖励 (原地不动时除外)
+            has_contact = 0.0  # (base 原地不动) 时的 四足触地个数 奖励
             feet_stumble = -0.0  # 四足接触到垂直表面 惩罚
             feet_slide = -0.01  # 脚接触地面具有相对base的速度 惩罚
-            foot_clearance_base = -0.1  # 大速度下 四足距base目标距离 惩罚
-            foot_clearance_base_terrain = -0.0  # 大速度下 四足离地目标高度 惩罚
+            feet_clearance_base = -0.1  # 大速度下 四足距base目标距离 惩罚
+            feet_clearance_terrain = -0.0  # 大速度下 四足离地目标高度 惩罚
+            feet_yaw_clearance_terrain = 1.0  # (base原地旋转) 时 脚抬起
             stuck = -0.01  # base 卡住 惩罚
             upward = 0.0  # 重力投影向下 奖励（恢复训练时开启）
 
@@ -271,8 +272,8 @@ class AlienGoRoughCfg( LeggedRobotCfg ):
         soft_dof_vel_limit = 0.95   # 关节速度软限位：超过最大速度95%时惩罚。保护电机模型不过载
         soft_torque_limit = 0.95    # 关节力矩软限位：超过额定扭矩95%时惩罚。防止仿真数值发散
         base_height_target = 0.43   # 机身目标高度
-        foot_height_target_base = -0.27  # 足部距base的 相对距离目标（抬脚高度为0.15 以适应台阶地形）
-        foot_height_target_terrain = 0.15  # 足部离地高度目标
+        feet_height_target_base = -0.27  # 足部距base的 相对距离目标（抬脚高度为0.15 以适应台阶地形）
+        feet_height_target_terrain = 0.15  # 足部离地高度目标
         max_contact_force = 100.    # 四足接触力 > 100N 时触发惩罚的阈值
 
     class normalization:

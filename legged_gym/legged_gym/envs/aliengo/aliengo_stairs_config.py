@@ -152,9 +152,9 @@ class AlienGoStairsCfg( AlienGoRoughCfg ):
             yaw=[-0.5, 0.5],
         )
 
-        dof_init_pos_ratio_range = [0.5, 1.5]
+        dof_init_pos_ratio_range = [0.8, 1.2]
 
-        randomize_dof_vel = True
+        randomize_dof_vel = False
         dof_init_vel_range = [-0.1, 0.1]
 
         disturbance = True
@@ -172,8 +172,8 @@ class AlienGoStairsCfg( AlienGoRoughCfg ):
             # general
             termination = -100.
             # velocity-tracking
-            tracking_lin_vel = 1.5
-            tracking_ang_vel = 0.75
+            tracking_lin_vel = 2.0
+            tracking_ang_vel = 2.0
             # root
             lin_vel_z = -2.0
             ang_vel_xy = -0.05
@@ -184,39 +184,40 @@ class AlienGoStairsCfg( AlienGoRoughCfg ):
             torque_limits = -0.0
             dof_vel = -0.0
             dof_acc = -2.5e-7
-            stand_still = -0.01
-            hip_pos = -0.15
-            thigh_pose = -0.1
-            calf_pose = -0.075
+            stand_still = -0.1
+            hip_pos = -0.12
+            thigh_pose = -0.05
+            calf_pose = -0.03
             dof_pos_limits = -0.0
             dof_vel_limits = -0.0
-            joint_power = -6e-5
+            joint_power = -3e-5
             feet_mirror = -0.05
             # action
-            action_rate = -0.01
-            smoothness = -0.002
+            action_rate = -0.05
+            smoothness = -0.02
             hip_action_magnitude = -0.0
             # contact
-            collision = -3.0
+            collision = -5.0
             feet_contact_forces = -0.00015
             # others
-            feet_air_time = 0.1
-            has_contact = 0.0
+            feet_air_time = 0.25
+            has_contact = 2.0
             feet_stumble = -2.0
-            feet_slide = -0.0
-            foot_clearance_base = -0.0
-            foot_clearance_base_terrain = -0.0
+            feet_slide = -0.01
+            feet_clearance_base = -0.0
+            feet_clearance_terrain = -0.0
+            feet_yaw_clearance_terrain = 1.0  # (base原地旋转) 时 脚抬起
             stuck = -1.
             upward = 0.0
 
         only_positive_rewards = False  # if true negative total rewards are clipped at zero (avoids early termination problems)
-        tracking_sigma = 0.25  # tracking reward = exp(-error^2/sigma)
+        tracking_sigma = 0.20  # tracking reward = exp(-error^2/sigma)
         soft_dof_pos_limit = 0.95  # percentage of urdf limits, values above this limit are penalized
         soft_dof_vel_limit = 0.95
         soft_torque_limit = 0.95
-        base_height_target = 0.43
-        foot_height_target_base = -0.27
-        foot_height_target_terrain = 0.15
+        base_height_target = 0.47
+        feet_height_target_base = -0.32
+        feet_height_target_terrain = 0.15
         max_contact_force = 100.  # forces above this value are penalized
 
 
@@ -235,5 +236,5 @@ class AlienGoStairsCfgPPO( AlienGoRoughCfgPPO ):
         run_name = ''
         # load and resume
         resume = True
-        load_run = osp.join(logs_root, 'flat_aliengo', 'Aug07_08-45-08_init_Heading_baseHeight')
+        load_run = osp.join(logs_root, 'flat_aliengo', 'Aug29_14-01-50_bigAng_newRewards_good')
         checkpoint = -1  # -1 = last saved model
