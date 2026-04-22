@@ -51,6 +51,24 @@ import torch
 import json
 from collections import OrderedDict
 
+
+def _ensure_numpy_compat_aliases():
+    # Compatibility for older Isaac Gym / PyTorch-era dependencies that still
+    # reference NumPy aliases removed in NumPy >= 1.24.
+    for alias, value in {
+        "bool": bool,
+        "int": int,
+        "float": float,
+        "complex": complex,
+        "object": object,
+        "str": str,
+    }.items():
+        if not hasattr(np, alias):
+            setattr(np, alias, value)
+
+
+_ensure_numpy_compat_aliases()
+
 from legged_gym.utils.helpers import update_class_from_dict
 
 

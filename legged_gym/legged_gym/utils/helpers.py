@@ -210,6 +210,36 @@ def export_policy_as_jit(actor_critic, path):
         traced_script_module = torch.jit.script(model)
         traced_script_module.save(path)
 
+
+
+
+def export_policy_as_onnx(actor_critic, path, input_size, opset_version=11):
+    os.makedirs(path, exist_ok=True)
+    if hasattr(actor_critic, 'estimator'):
+        model = PolicyExporterHIM(actor_critic).to('cpu')
+        onnx_path = os.path.join(path, 'policy.onnx')
+        input_name = 'state'
+    else:
+        model = copy.deepcopy(actor_critic.actor).to('cpu')
+        onnx_path = os.path.join(path, 'policy_1.onnx')
+        input_name = 'state'
+        input_size = model[0].in_features
+
+    dummy_input = torch.zeros(1, input_size, dtype=torch.float32)
+    torch.onnx.export(
+        model,
+        dummy_input,
+        onnx_path,
+        opset_version=opset_version,
+        export_params=True,
+        do_constant_folding=True,
+        input_names=[input_name],
+        output_names=['output'],
+        dynamic_axes={input_name: {0: 'batch'}, 'output': {0: 'batch'}},
+    )
+    
+
+    
 # class PolicyExporterLSTM(torch.nn.Module):
 #     def __init__(self, actor_critic):
 #         super().__init__()
@@ -250,7 +280,8 @@ class PolicyExporterHIM(torch.nn.Module):
         parts = self.estimator(obs_history)[:, 0:19]
         vel, z = parts[..., :3], parts[..., 3:]
         z = F.normalize(z, dim=-1, p=2.0)
-        return self.actor(torch.cat((obs_history[:, 0:45], vel, z), dim=1))
+        obs_dim = self.actor[0].in_features - (vel.shape[1] + z.shape[1])
+        return self.actor(torch.cat((obs_history[:, 0:obs_dim], vel, z), dim=1))
 
     def export(self, path):
         os.makedirs(path, exist_ok=True)

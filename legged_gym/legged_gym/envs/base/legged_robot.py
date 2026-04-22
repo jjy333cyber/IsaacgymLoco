@@ -457,9 +457,9 @@ class LeggedRobot(BaseTask):
     def compute_observations(self):
         """ Computes observations
         """
-        current_obs = torch.cat((   self.commands[:, :3] * self.commands_scale,  # * [2, 2, 0.25]
-                                    self.base_ang_vel  * self.obs_scales.ang_vel,  # 0.25
+        current_obs = torch.cat((   self.base_ang_vel  * self.obs_scales.ang_vel,  # 0.25
                                     self.projected_gravity,
+                                    self.commands[:, :3] * self.commands_scale,  # * [2, 2, 0.25]
                                     (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,  # 1.0
                                     self.dof_vel * self.obs_scales.dof_vel,  # 0.05
                                     self.actions
@@ -494,11 +494,11 @@ class LeggedRobot(BaseTask):
         # return torch.cat((joint_pos, base_lin_vel, base_ang_vel, joint_vel, z_pos), dim=-1)
 
     def get_current_obs(self):
-        current_obs = torch.cat((   self.commands[:, :3] * self.commands_scale,
-                                    self.base_ang_vel  * self.obs_scales.ang_vel,
+        current_obs = torch.cat((   self.base_ang_vel  * self.obs_scales.ang_vel,  # 0.25
                                     self.projected_gravity,
-                                    (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
-                                    self.dof_vel * self.obs_scales.dof_vel,
+                                    self.commands[:, :3] * self.commands_scale,  # * [2, 2, 0.25]
+                                    (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,  # 1.0
+                                    self.dof_vel * self.obs_scales.dof_vel,  # 0.05
                                     self.actions
                                     ),dim=-1)
         # add noise if needed
@@ -517,11 +517,11 @@ class LeggedRobot(BaseTask):
     def compute_termination_observations(self, env_ids):
         """ Computes observations (num_envs, 45+3+3+187)
         """
-        current_obs = torch.cat((   self.commands[:, :3] * self.commands_scale,
-                                    self.base_ang_vel  * self.obs_scales.ang_vel,
+        current_obs = torch.cat((   self.base_ang_vel  * self.obs_scales.ang_vel,  # 0.25
                                     self.projected_gravity,
-                                    (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
-                                    self.dof_vel * self.obs_scales.dof_vel,
+                                    self.commands[:, :3] * self.commands_scale,  # * [2, 2, 0.25]
+                                    (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,  # 1.0
+                                    self.dof_vel * self.obs_scales.dof_vel,  # 0.05
                                     self.actions
                                     ),dim=-1)
         # add noise if needed
@@ -712,30 +712,65 @@ class LeggedRobot(BaseTask):
         if self.cfg.domain_rand.disturbance and (self.common_step_counter % self.cfg.domain_rand.disturbance_interval == 0):
             self._disturbance_robots()
 
+    # def _resample_commands(self, env_ids):
+    #     """ Randommly select commands of some environments
+
+    #     Args:
+    #         env_ids (List[int]): Environments ids for which new commands are needed
+    #     """
+    #     # 重新采样env_ids的commands
+    #     self.commands[env_ids, 0] = torch_rand_float(-1.0, 1.0, (len(env_ids), 1), device=self.device).squeeze(1)
+    #     self.commands[env_ids, 1] = torch_rand_float(self.command_ranges["lin_vel_y"][0], self.command_ranges["lin_vel_y"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+    #     if self.cfg.commands.heading_command:
+    #         self.commands[env_ids, 3] = torch_rand_float(self.command_ranges["heading"][0], self.command_ranges["heading"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+    #     else:
+    #         self.commands[env_ids, 2] = torch_rand_float(self.command_ranges["ang_vel_yaw"][0], self.command_ranges["ang_vel_yaw"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+
+    #     # 处理高速 env 的commands（前 20%）
+    #     high_vel_env_ids = (env_ids < (self.num_envs * 0.2))
+    #     high_vel_env_ids = env_ids[high_vel_env_ids.nonzero(as_tuple=True)]
+    #     self.commands[high_vel_env_ids, 0] = torch_rand_float(self.command_ranges["lin_vel_x"][0], self.command_ranges["lin_vel_x"][1], (len(high_vel_env_ids), 1), device=self.device).squeeze(1)
+    #     # set y commands of high vel envs to zero
+    #     self.commands[high_vel_env_ids, 1:2] *= (torch.norm(self.commands[high_vel_env_ids, 0:1], dim=1) < 1.0).unsqueeze(1)
+
+    #     # set small commands to zero
+    #     self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
+
     def _resample_commands(self, env_ids):
-        """ Randommly select commands of some environments
+        """ Randomly select commands of some environments """
 
-        Args:
-            env_ids (List[int]): Environments ids for which new commands are needed
-        """
-        # 重新采样env_ids的commands
         self.commands[env_ids, 0] = torch_rand_float(-1.0, 1.0, (len(env_ids), 1), device=self.device).squeeze(1)
-        self.commands[env_ids, 1] = torch_rand_float(self.command_ranges["lin_vel_y"][0], self.command_ranges["lin_vel_y"][1], (len(env_ids), 1), device=self.device).squeeze(1)
-        if self.cfg.commands.heading_command:
-            self.commands[env_ids, 3] = torch_rand_float(self.command_ranges["heading"][0], self.command_ranges["heading"][1], (len(env_ids), 1), device=self.device).squeeze(1)
-        else:
-            self.commands[env_ids, 2] = torch_rand_float(self.command_ranges["ang_vel_yaw"][0], self.command_ranges["ang_vel_yaw"][1], (len(env_ids), 1), device=self.device).squeeze(1)
 
-        # 处理高速 env 的commands（前 20%）
-        high_vel_env_ids = (env_ids < (self.num_envs * 0.2))
-        high_vel_env_ids = env_ids[high_vel_env_ids.nonzero(as_tuple=True)]
-        self.commands[high_vel_env_ids, 0] = torch_rand_float(self.command_ranges["lin_vel_x"][0], self.command_ranges["lin_vel_x"][1], (len(high_vel_env_ids), 1), device=self.device).squeeze(1)
-        # set y commands of high vel envs to zero
+        self.commands[env_ids, 1] = torch_rand_float(self.command_ranges["lin_vel_y"][0],self.command_ranges["lin_vel_y"][1],(len(env_ids), 1),device=self.device,).squeeze(1)
+
+        if self.cfg.commands.heading_command:
+            self.commands[env_ids, 3] = torch_rand_float(self.command_ranges["heading"][0],self.command_ranges["heading"][1],(len(env_ids), 1),device=self.device).squeeze(1)
+        else:
+            self.commands[env_ids, 2] = torch_rand_float(self.command_ranges["ang_vel_yaw"][0],self.command_ranges["ang_vel_yaw"][1],(len(env_ids), 1),device=self.device).squeeze(1)
+
+        # 2. 高速 env（前20%）
+        high_vel_mask = (env_ids < (self.num_envs * 0.2))
+        high_vel_env_ids = env_ids[high_vel_mask.nonzero(as_tuple=True)]
+        self.commands[high_vel_env_ids, 0] = torch_rand_float(self.command_ranges["lin_vel_x"][0],self.command_ranges["lin_vel_x"][1],(len(high_vel_env_ids), 1),device=self.device).squeeze(1)
         self.commands[high_vel_env_ids, 1:2] *= (torch.norm(self.commands[high_vel_env_ids, 0:1], dim=1) < 1.0).unsqueeze(1)
 
+        # 3. 新增：随机选10%完全静止
+        if self.cfg.commands.stand_still_command:
+            num_envs = len(env_ids)
+            perm = torch.randperm(num_envs, device=self.device)
+            num_zero = int(0.2 * num_envs)
+            zero_env_ids = env_ids[perm[:num_zero]]
+            self.commands[zero_env_ids, 0:3] = 0.0
+
+        # 4. 新增：随机选30% 只转向
+        if self.cfg.commands.Rotate_command:
+            num_turn = int(0.2 * num_envs)
+            turn_env_ids = env_ids[perm[num_zero:num_zero + num_turn]]
+            self.commands[turn_env_ids, 0:2] = 0.0
+            
         # set small commands to zero
         self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
-
+        
     def _compute_torques(self, actions):
         """ Compute torques from actions.
             Actions can be interpreted as position or velocity targets given to a PD controller, or directly as scaled torques.
@@ -1024,6 +1059,8 @@ class LeggedRobot(BaseTask):
         # 存储每个刚体在xyz方向的接触力，(num_envs, num_bodies 17, 3)
         self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3) # shape: num_envs, num_bodies, xyz axis
 
+        self.rigid_state = gymtorch.wrap_tensor(rigid_body_state).view(self.num_envs, self.num_bodies, 13)
+
         # initialize some data used later on
         # 初始化计数器、额外数据、重力向量等
         self.common_step_counter = 0  # 步数计数器
@@ -1063,7 +1100,12 @@ class LeggedRobot(BaseTask):
 
         if self.cfg.terrain.measure_heights:
             self.height_points = self._init_height_points()
-        self.measured_heights = self._get_heights()
+            self.measured_heights = self._get_heights()
+
+        else:  # 未启用高度测量
+            self.num_height_points = 0  # 保持一致的属性存在
+            self.measured_heights = torch.zeros(self.num_envs, 0, device=self.device, requires_grad=False)  # 空高度张量
+        
         self.base_height_points = self._init_base_height_points()
 
         # joint positions offsets and PD gains
@@ -1655,10 +1697,41 @@ class LeggedRobot(BaseTask):
                     sphere_pose = gymapi.Transform(gymapi.Vec3(x, y, z), r=None)
                     gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[i], sphere_pose)
 
+    def _get_phase(self):
+        cycle_time = self.cfg.rewards.cycle_time
+        phase = (self.episode_length_buf * self.dt)%cycle_time/cycle_time
+        return phase
+
+    def _get_gait_phase(self):
+        # return float mask 1 is stance, 0 is swing
+        phase = self._get_phase()
+        stance_mask = torch.zeros((self.num_envs, 2), device=self.device)
+        stance_mask[:, 0] = phase<0.5
+        stance_mask[:, 1] = phase>0.5
+        return stance_mask
+    
+    def _get_foot_indices_trot(self):
+        """
+        返回每条腿的 gait phase（0~1）
+        顺序: [FR, FL, RR, RL]
+        """
+        phase = self._get_phase()  # [num_envs]
+
+        foot_indices = torch.zeros(self.num_envs, 4, device=self.device)
+
+        foot_indices[:, 0] = phase          # FL
+        foot_indices[:, 2] = phase          # RL
+
+        phase_offset = (phase + 0.5) % 1.0
+        foot_indices[:, 1] = phase_offset   # FR
+        foot_indices[:, 3] = phase_offset   # RR
+
+        return foot_indices
+
     # ------------ reward functions ------------
     def _reward_tracking_lin_vel(self):
         # 奖励 跟踪 commands 中XY方向的 线速度 (>= 0.1m/s时)
-        small_commands = torch.norm(self.commands[:, :2], dim=1) < 0.1
+        small_commands = torch.norm(self.commands[:, :2], dim=1) < 0.2
         track_commands = self.commands[:, :2] * (~small_commands.unsqueeze(-1))
         lin_vel_error = torch.sum(
             torch.square(track_commands - self.base_lin_vel[:, :2]),
@@ -1679,12 +1752,35 @@ class LeggedRobot(BaseTask):
         self.last_contacts = contact
         first_contact = (self.feet_air_time > 0.) * contact_filt  # 只考虑从空中首次触地的情况
         self.feet_air_time += self.dt  # 累加 policy 步长（0.02s）
-        rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1)  # 仅奖励第一次触地，且计算与目标时间0.5s的偏差奖励
-        condition = (torch.norm(self.commands[:, :2], dim=1) > 0.1) | (
+        air_time_error = -torch.abs(self.feet_air_time - 0.5)
+        rew_airTime = torch.sum(air_time_error * first_contact, dim=1)  # 仅奖励第一次触地，且计算与目标时间0.5s的偏差奖励
+        condition = (torch.norm(self.commands[:, :2], dim=1) > 0.2) | (
                     torch.abs(self.commands[:, 2]) > 0.05)  # commands XY方向线速度 > 0.1m/s 或 yaw方向角速度 > 0.05rad/s 时才奖励
         rew_airTime *= condition.float()
         self.feet_air_time *= ~contact_filt  # 当前帧 触地的足 空中时间清0
         return rew_airTime
+    
+    def _reward_feet_air_time_variance_velocity(self):
+        """
+        惩罚四条腿 air time 不一致（步态节奏不均匀）
+        只在运动时生效
+        """
+        contact = self.contact_forces[:, self.feet_indices, 2] > 1.
+        contact_filt = torch.logical_or(contact, self.last_contacts)
+        self.last_contacts = contact
+        first_contact = (self.feet_air_time > 0.) * contact_filt
+        self.feet_air_time += self.dt
+        air_time = self.feet_air_time * first_contact
+
+        variance = torch.var(air_time, dim=1)
+        
+        condition = (torch.norm(self.commands[:, :2], dim=1) > 0.2) | (
+                    torch.abs(self.commands[:, 2]) > 0.05)  # commands XY方向线速度 > 0.1m/s 或 yaw方向角速度 > 0.05rad/s 时才奖励
+        # ------------------- 最终 reward（注意是 penalty） -------------------
+        reward = variance * condition.float()
+        # ------------------- reset air time（触地清零） -------------------
+        self.feet_air_time *= ~contact_filt
+        return reward
 
     def _reward_upward(self):
         # 奖励 重力投影向下
@@ -1693,7 +1789,7 @@ class LeggedRobot(BaseTask):
     def _reward_has_contact(self):
         # 奖励 (base 原地不动) 时的 四足触地个数
         contact_filt = 1. * self.contact_filt
-        condition = (torch.norm(self.commands[:, :2], dim=1) < 0.1) & (torch.abs(self.commands[:, 2]) < 0.05)
+        condition = (torch.norm(self.commands[:, :2], dim=1) < 0.2) & (torch.abs(self.commands[:, 2]) < 0.05)
         return condition.float() * torch.sum(contact_filt, dim=-1) / 4
 
     # ------------ penalty functions ------------
@@ -1703,11 +1799,17 @@ class LeggedRobot(BaseTask):
     def _reward_lin_vel_z_up(self):
         return torch.square(self.base_lin_vel[:, 2]) * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
     
+    def _reward_lin_vel_z_abs(self):
+        return torch.exp(torch.abs(self.base_lin_vel[:, 2]))
+    
     def _reward_ang_vel_xy(self):
         # 惩罚 base 的 roll, pitch 轴角速度, 防止翻滚
         return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1)
     def _reward_ang_vel_xy_up(self):
         return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1) * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
+
+    def _reward_ang_vel_xy_exp_abs(self):
+        return torch.exp(-torch.norm(torch.abs(self.base_ang_vel[:, :2]), dim=1))
     
     def _reward_orientation(self):
         # 惩罚 base 非水平姿态
@@ -1715,6 +1817,9 @@ class LeggedRobot(BaseTask):
     def _reward_orientation_up(self):
         return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1) * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
 
+    def _reward_orientation_exp(self):
+        return torch.exp(-torch.norm(self.projected_gravity[:, :2], dim=1)*10)
+    
     def _reward_base_height(self):
         # 惩罚 base 偏离目标高度
         base_height = self._get_base_heights()
@@ -1722,6 +1827,17 @@ class LeggedRobot(BaseTask):
     def _reward_base_height_up(self):
         base_height = self._get_base_heights()
         return torch.square(base_height - self.cfg.rewards.base_height_target) * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
+
+    def _reward_base_height_exp(self):
+        # Penalize base height away from target
+        base_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
+        return torch.exp(-torch.abs(base_height - self.cfg.rewards.base_height_target)*10)*(torch.norm(self.commands[:, :2], dim=1) < 0.2)
+
+    def _reward_base_height_vel(self):
+        base_height = self._get_base_heights()
+        base_lin_vel = torch.norm(self.base_lin_vel, dim=1)
+        return base_lin_vel * torch.square(base_height - self.cfg.rewards.base_height_target_vel)
+
 
     # --- dof velocity ---
     def _reward_dof_vel(self):
@@ -1732,6 +1848,10 @@ class LeggedRobot(BaseTask):
         # 惩罚 关节加速度
         return torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1)
 
+    def _reward_dof_acc_dt(self):
+        # Penalize dof accelerations
+        return torch.sum(torch.square((self.last_dof_vel - self.dof_vel)), dim=1)
+    
     def _reward_dof_vel_limits(self):
         # 惩罚 关节速度接近极限
         # 裁剪至 max error = 每个关节 1 rad/s，以避免 巨大惩罚
@@ -1867,13 +1987,13 @@ class LeggedRobot(BaseTask):
     # --- stand, stuck ---
     def _reward_stand_still(self):
         # 惩罚 (base原地不动 或 原地旋转) 时的 关节位置与默认关节位置的 偏差
-        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1  # commands 中XY方向线速度 < 0.1 m/s (不论角速度大小，都会受到惩罚)
+        condition = torch.norm(self.commands[:, :3], dim=1) < 0.1  # commands 中XY方向线速度 < 0.1 m/s (不论角速度大小，都会受到惩罚)
         dof_deviation = torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)
         return dof_deviation * condition.float()
 
     def _reward_stand_nice(self):
         # 惩罚 (base原地不动 或 原地旋转) 且 重力投影向下时 的 关节位置与默认关节位置的 偏差
-        condition = (torch.norm(self.commands[:, :2], dim=1) < 0.1) * (1 - self.projected_gravity[:, 2])
+        condition = (torch.norm(self.commands[:, :2], dim=1) < 0.2) * (1 - self.projected_gravity[:, 2])
         dof_deviation = torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)
         return dof_deviation * condition.float()
 
@@ -1881,12 +2001,12 @@ class LeggedRobot(BaseTask):
         # 惩罚 卡住
         # 判断是否卡住：
         #   base 的 (XY方向线速度 < 0.1 m/s 且 yaw方向角速度 < 0.1 rad/s)
-        small_lin_vel = torch.norm(self.base_lin_vel[:, :2], dim=1) < 0.1
-        small_ang_vel = torch.abs(self.base_ang_vel[:, 2]) < 0.1
+        small_lin_vel = torch.norm(self.base_lin_vel[:, :2], dim=1) < 0.2
+        small_ang_vel = torch.abs(self.base_ang_vel[:, 2]) < 0.2
         stuck = small_lin_vel & small_ang_vel
         #   但 commands 的 线速度 > 0.1 m/s 或 角速度 > 0.1 rad/s
-        large_lin_commands = torch.norm(self.commands[:, :2], dim=1) > 0.1
-        large_ang_commands = torch.abs(self.commands[:, 2]) > 0.1
+        large_lin_commands = torch.norm(self.commands[:, :2], dim=1) > 0.2
+        large_ang_commands = torch.abs(self.commands[:, 2]) > 0.2
         large_commands = large_lin_commands | large_ang_commands
         return stuck * large_commands
 
@@ -1901,34 +2021,35 @@ class LeggedRobot(BaseTask):
         hip_deviation = torch.sum(torch.abs(self.dof_pos[:, [0, 3, 6, 9]] - self.default_dof_pos[:, [0, 3, 6, 9]]), dim=1)
         #   XY方向线速度 < 0.1 m/s (不论角速度大小，都会受到惩罚) 时，惩罚力度为 5.0
         #   XY方向线速度 >= 0.1 m/s 时，惩罚力度为 1.0
-        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1
+        condition = torch.norm(self.commands[:, :3], dim=1) < 0.1
         multiplier = 1.0 + condition.float() * 4.0
         return hip_deviation * multiplier
+    
     def _reward_hip_pos_up(self):
         hip_deviation = torch.sum(torch.abs(self.dof_pos[:, [0, 3, 6, 9]] - self.default_dof_pos[:, [0, 3, 6, 9]]), dim=1)
-        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1
+        condition = torch.norm(self.commands[:, :2], dim=1) < 0.2
         multiplier = 1.0 + condition.float() * 4.0
         return hip_deviation * multiplier * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
 
     def _reward_thigh_pose(self):
         thigh_deviation = torch.sum(torch.abs(self.dof_pos[:, [1, 4, 7, 10]] - self.default_dof_pos[:, [1, 4, 7, 10]]), dim=1)
-        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1
+        condition = torch.norm(self.commands[:, :3], dim=1) < 0.1
         multiplier = 1.0 + condition.float() * 4.0
         return thigh_deviation * multiplier
     def _reward_thigh_pose_up(self):
         thigh_deviation = torch.sum(torch.abs(self.dof_pos[:, [1, 4, 7, 10]] - self.default_dof_pos[:, [1, 4, 7, 10]]), dim=1)
-        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1
+        condition = torch.norm(self.commands[:, :2], dim=1) < 0.2
         multiplier = 1.0 + condition.float() * 4.0
         return thigh_deviation * multiplier * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
 
     def _reward_calf_pose(self):
         calf_deviation = torch.sum(torch.abs(self.dof_pos[:, [2, 5, 8, 11]] - self.default_dof_pos[:, [2, 5, 8, 11]]), dim=1)
-        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1
+        condition = torch.norm(self.commands[:, :3], dim=1) < 0.1
         multiplier = 1.0 + condition.float() * 4.0
         return calf_deviation * multiplier
     def _reward_calf_pose_up(self):
         calf_deviation = torch.sum(torch.abs(self.dof_pos[:, [2, 5, 8, 11]] - self.default_dof_pos[:, [2, 5, 8, 11]]), dim=1)
-        condition = torch.norm(self.commands[:, :2], dim=1) < 0.1
+        condition = torch.norm(self.commands[:, :2], dim=1) < 0.2
         multiplier = 1.0 + condition.float() * 4.0
         return calf_deviation * multiplier * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
 
@@ -1947,10 +2068,26 @@ class LeggedRobot(BaseTask):
 
         # 四足相对base的高度 距 目标高度 的误差（平方误差）
         height_error = torch.square(footpos_in_body_frame[:, :, 2] - self.cfg.rewards.feet_height_target_base).view(self.num_envs, -1)
+        condition = (torch.norm(self.commands[:, :2], dim=1) > 0.2) | (
+                    torch.abs(self.commands[:, 2]) > 0.05)  # commands XY方向线速度 > 0.1m/s 或 yaw方向角速度 > 0.05rad/s 时才奖励 
         # 四足相对base的 线速度 的模
         feet_leteral_vel = torch.sqrt(torch.sum(torch.square(footvel_in_body_frame[:, :, :2]), dim=2)).view(self.num_envs, -1)
-        return torch.sum(height_error * feet_leteral_vel, dim=1)
+        return torch.sum(height_error * feet_leteral_vel, dim=1) * condition.float()
+        return torch.sum(height_error, dim=1) * condition.float()
 
+    # def _reward_foot_clearance(self):
+    #     cur_footpos_translated = self.feet_pos - self.root_states[:, 0:3].unsqueeze(1)
+    #     footpos_in_body_frame = torch.zeros(self.num_envs, len(self.feet_indices), 3, device=self.device)
+    #     cur_footvel_translated = self.feet_vel - self.root_states[:, 7:10].unsqueeze(1)
+    #     footvel_in_body_frame = torch.zeros(self.num_envs, len(self.feet_indices), 3, device=self.device)
+    #     for i in range(len(self.feet_indices)):
+    #         footpos_in_body_frame[:, i, :] = quat_rotate_inverse(self.base_quat, cur_footpos_translated[:, i, :])
+    #         footvel_in_body_frame[:, i, :] = quat_rotate_inverse(self.base_quat, cur_footvel_translated[:, i, :])
+        
+    #     height_error = torch.square(footpos_in_body_frame[:, :, 2] - self.cfg.rewards.clearance_height_target).view(self.num_envs, -1)
+    #     foot_leteral_vel = torch.sqrt(torch.sum(torch.square(footvel_in_body_frame[:, :, :2]), dim=2)).view(self.num_envs, -1)
+    #     return torch.sum(height_error * foot_leteral_vel, dim=1)
+    
     def _reward_feet_clearance_base_up(self):
         # 惩罚 大速度下 四足抬脚距base的高度 偏离目标距离 （-0.2 m）（摔倒时不计算）
         # 当前四足相对base的 位置 和 线速度（世界坐标系）
@@ -1988,10 +2125,265 @@ class LeggedRobot(BaseTask):
 
     def _reward_feet_yaw_clearance_terrain(self):
         # 奖励 (base原地旋转) 时 脚抬起
-        condition = (torch.abs(self.commands[:, 2]) > 0.05) & (torch.norm(self.commands[:, :2], dim=1) < 0.1)
+        condition = (torch.abs(self.commands[:, 2]) > 0.05) & (torch.norm(self.commands[:, :2], dim=1) < 0.2)
 
         feet_heights = self._get_feet_heights()
+        feet_heights = torch.clip(feet_heights,min=0,max = self.cfg.rewards.target_foot_height_yaw)
         mean_foot_height = torch.mean(feet_heights, dim=1)
 
         height_reward = torch.tanh(mean_foot_height + 0.15)
         return condition.float() * height_reward
+
+    # --- gait related rewards ---
+    def _reward_trot(self):
+        """
+        Calculates a reward based on the number of feet contacts aligning with the gait phase. 
+        Rewards or penalizes depending on whether the foot contact matches the expected gait phase.
+        """
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.
+
+        stance_mask = self._get_gait_phase()
+        TROT = (contact[:,0] == contact[:,3]) & \
+            (contact[:,1] == contact[:,2]) & \
+            (contact[:,0] == stance_mask[:,0]) & \
+            (contact[:,1] == stance_mask[:,1])
+        # print( JUMP.to(torch.float32).mean())
+        # print(self.feet_indices)['FL_foot', 'FR_foot', 'RL_foot', 'RR_foot'] tensor([ 6, 12, 20, 26], device='cuda:0')
+        self.trot=TROT.to(torch.float32).mean()*(torch.norm(self.commands[:, :3], dim=1) > 0.1)+(torch.sum((torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) > 0.1),dim=1)==4)*(torch.norm(self.commands[:, :3], dim=1) < 0.1)
+        # print(stance_mask[0,0],stance_mask[0,1],phase)
+
+
+        speed = torch.norm(self.commands[:, :2], dim=1)
+        
+        condition = (torch.norm(self.commands[:, :2], dim=1) > 0.2) | (
+                    torch.abs(self.commands[:, 2]) > 0.05)  # commands XY方向线速度 > 0.1m/s 或 yaw方向角速度 > 0.05rad/s 时才奖励
+        
+        high_mask = speed > 2.0
+        TROT = torch.where(high_mask, 2 * torch.ones_like(TROT), TROT)
+        # TROT = torch.where(terrain_mask, 2 * torch.ones_like(TROT), TROT)
+        return TROT * condition.float()
+
+    def _reward_feet_clearance_swing(self):#鼓励抬脚高度
+        """
+        Calculates reward based on the clearance of the swing leg from the ground during movement.
+        Encourages appropriate lift of the feet during the swing phase of the gait.
+        """
+        # Compute feet contact mask
+        # self.feet_height =self.rigid_state[:, self.feet_indices, 2] - 0.02
+        # left_feet_height=self.feet_height[:,::3]
+        # right_feet_height=self.feet_height[:,1:3]
+
+        feet_heights = self._get_feet_heights()
+        left_feet_height=feet_heights[:,::3]
+        right_feet_height=feet_heights[:,1:3]
+
+        # Compute swing mask
+        swing_mask = (1 - self._get_gait_phase())
+        phase=self._get_phase()
+        # feet height should larger than target feet height at the peak
+        target_height=(torch.abs(torch.sin(2*torch.pi*phase))*self.cfg.rewards.target_foot_height).unsqueeze(1).repeat(1,2)
+        # print(left_feet_height.shape,right_feet_height.shape,target_height.shape)
+        rew=torch.exp(-torch.sum(torch.abs(left_feet_height-target_height)*swing_mask[:,0].unsqueeze(1).repeat(1,2),dim=1)*10)
+        # print(rew[0],torch.sum(torch.abs(left_feet_height-target_height),dim=1)[0])
+        rew+=torch.exp(-torch.sum(torch.abs(right_feet_height-target_height)*swing_mask[:,1].unsqueeze(1).repeat(1,2),dim=1)*10)
+    
+        speed = torch.norm(self.commands[:, :2], dim=1)
+        condition = (torch.norm(self.commands[:, :2], dim=1) > 0.2) | (
+                    torch.abs(self.commands[:, 2]) > 0.05)  # commands XY方向线速度 > 0.1m/s 或 yaw方向角速度 > 0.05rad/s 时才奖励
+        rew *= condition.float()
+
+        high_mask = speed > 2.0
+        rew = torch.where(high_mask, 2 * torch.ones_like(rew), rew)
+        # rew = torch.where(terrain_mask, 2 * torch.ones_like(rew), rew)
+
+        return rew
+    
+    def _reward_x_command_hip_regular(self):
+        hip_dof_indices = [0, 3, 6, 9]
+        hip_pos = self.dof_pos[:, hip_dof_indices]
+        x_command_ratio = torch.abs(self.commands[:,0]) / torch.norm(self.commands[:,:3], dim=1)
+        rew = torch.abs(hip_pos[:,0]+hip_pos[:,1]) + torch.abs(hip_pos[:,2]+hip_pos[:,3])
+        return rew * x_command_ratio
+    
+    def _reward_feet_regulation(self):
+        # CTS抬腿正则奖励, 在脚末端速度增大同时, 要求高度尽可能高
+        base_height = self._get_base_heights()  # 更新刚体空间位置 (开悟比赛无法修改环境, 只能在奖励中完成计算了)
+        feet_pos = self.rigid_body_states.view(self.num_envs, self.num_bodies, 13)[:, self.feet_indices, 0:3]
+        feet_xy_vel = self.rigid_body_states.view(self.num_envs, self.num_bodies, 13)[:, self.feet_indices, 7:9]
+        base_pos = self.root_states[:, 0:3].unsqueeze(1)
+        delta_feet = feet_pos - base_pos
+        feet2base_height = (delta_feet * self.projected_gravity.unsqueeze(1)).sum(-1)  # 脚相对于身体的高度 (N, 4)
+        feet_height = torch.clamp(base_height.unsqueeze(1) - feet2base_height, min=0.0)  # 脚相对于地面的高度 (N, 4)
+        rew = (feet_xy_vel.pow(2).sum(-1) * torch.exp(-feet_height / (0.025 * self.cfg.rewards.base_height_target))).sum(-1)
+        return rew
+    
+    # *****************************************************JUMP************************************************************************
+
+
+    def _get_phase_jump(self):
+        cycle_time = self.cfg.rewards.cycle_time
+        phase = (self.episode_length_buf * self.dt / cycle_time) % 1.0
+        return phase
+
+    def _get_gait_phase_jump(self):
+        # return float mask 1 is stance, 0 is swing
+        phase = self._get_phase()
+        sin_pos = torch.sin(2 * torch.pi * phase)
+        # Add double support phase
+        stance_mask = torch.zeros((self.num_envs, 2), device=self.device)
+        # left foot stance
+        stance_mask[:, 0] = phase<0.5
+        # right foot stance
+        stance_mask[:, 1] = phase>0.5
+        return stance_mask
+    
+    def _get_foot_indices_jump(self):
+        phase = self._get_phase_jump()
+        foot_indices = phase.unsqueeze(1).repeat(1, 4)
+        return foot_indices
+
+    def _reward_jump(self):
+        """
+        Calculates a reward based on the number of feet contacts aligning with the gait phase. 
+        Rewards or penalizes depending on whether the foot contact matches the expected gait phase.
+        """
+        contact = self.contact_forces[:, self.feet_indices, 2] > 5.
+        stance_mask = self._get_gait_phase_jump()
+        JUMP = (contact[:,0] == contact[:,1]) \
+            & (contact[:,1] == contact[:,2]) \
+            & (contact[:,2] == contact[:,3]) \
+            & (contact[:,3] == stance_mask[:,0])
+        # print( JUMP.to(torch.float32).mean())
+        speed = torch.norm(self.commands[:, :2], dim=1)
+        condition = (torch.norm(self.commands[:, :2], dim=1) > 0.2) | (
+                    torch.abs(self.commands[:, 2]) > 0.05)  # commands XY方向线速度 > 0.1m/s 或 yaw方向角速度 > 0.05rad/s 时才奖励
+        JUMP *= condition
+
+        return JUMP
+
+    def _reward_feet_clearance_jump(self): # 跳跃
+        """
+        Calculates reward based on the clearance of the swing leg from the ground during movement.
+        Encourages appropriate lift of the feet during the swing phase of the gait.
+        """
+        # Compute feet contact mask
+        self.feet_height =self.rigid_state[:, self.feet_indices, 2] - 0.02
+        # Compute swing mask
+        swing_mask = 1 - self._get_gait_phase_jump()
+        # feet height should larger than target feet height at the peak
+        rew_pos = torch.clip(self.feet_height,min=0,max=self.cfg.rewards.target_foot_height)
+        rew_pos = torch.sum(rew_pos * swing_mask[:,:1].repeat(1,4), dim=1)
+
+        condition = (torch.norm(self.commands[:, :2], dim=1) > 0.2) | (
+                    torch.abs(self.commands[:, 2]) > 0.05)  # commands XY方向线速度 > 0.1m/s 或 yaw方向角速度 > 0.05rad/s 时才奖励
+        rew_pos *= condition.float()
+
+        return rew_pos
+
+    def _reward_default_pos(self):
+        # Penalize motion at zero commands
+        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) #* (torch.norm(self.commands[:, :2], dim=1) < 0.1)
+    
+    def _reward_default_hip_pos(self):
+        """
+        Calculates the reward for keeping joint positions close to default positions, with a focus 
+        on penalizing deviation in yaw and roll directions. Excludes yaw and roll from the main penalty.
+        """
+        joint_diff = torch.abs(self.dof_pos[:,0])+torch.abs(self.dof_pos[:,3])+torch.abs(self.dof_pos[:,6])+torch.abs(self.dof_pos[:,9])
+        # print("!!!!!1",torch.exp(-joint_diff * 4).shape)
+        # return torch.exp(-joint_diff * 4) 
+        return joint_diff
+    
+    # *****************************************************STAIRS************************************************************************
+    def _reward_raibert_heuristic_jump(self):
+        cur_footsteps_translated = self.feet_pos - self.base_pos.unsqueeze(1)
+        footsteps_in_body_frame = torch.zeros(self.num_envs, 4, 3, device=self.device)
+        for i in range(4):
+            footsteps_in_body_frame[:, i, :] = quat_apply_yaw(quat_conjugate(self.base_quat),
+                                                              cur_footsteps_translated[:, i, :])
+
+        # nominal positions: [FR, FL, RR, RL]
+        if self.cfg.commands.num_commands >= 13:
+            desired_stance_width = self.commands[:, 12:13]
+            desired_ys_nom = torch.cat([desired_stance_width / 2, -desired_stance_width / 2, desired_stance_width / 2, -desired_stance_width / 2], dim=1)
+        else:
+            desired_stance_width = 0.32
+            desired_ys_nom = torch.tensor([desired_stance_width / 2,  -desired_stance_width / 2, desired_stance_width / 2, -desired_stance_width / 2], device=self.device).unsqueeze(0)
+
+        if self.cfg.commands.num_commands >= 14:
+            desired_stance_length = self.commands[:, 13:14]
+            desired_xs_nom = torch.cat([desired_stance_length / 2, desired_stance_length / 2, -desired_stance_length / 2, -desired_stance_length / 2], dim=1)
+        else:
+            desired_stance_length = 0.37
+            desired_xs_nom = torch.tensor([desired_stance_length / 2,  desired_stance_length / 2, -desired_stance_length / 2, -desired_stance_length / 2], device=self.device).unsqueeze(0)
+
+        # raibert offsets
+        foot_indices = self._get_foot_indices_jump()
+        phases = torch.abs(1.0 - (foot_indices * 2.0)) * 1.0 - 0.5
+        # frequencies = self.commands[:, 4]
+        frequencies = 1.0
+        frequencies = torch.ones(self.num_envs, device=self.device) * frequencies
+        x_vel_des = self.commands[:, 0:1]
+        yaw_vel_des = self.commands[:, 2:3]
+        y_vel_des = yaw_vel_des * desired_stance_length / 2
+        desired_ys_offset = phases * y_vel_des * (0.5 / frequencies.unsqueeze(1))
+        desired_ys_offset[:, 2:4] *= -1
+        desired_xs_offset = phases * x_vel_des * (0.5 / frequencies.unsqueeze(1))
+
+        desired_ys_nom = desired_ys_nom + desired_ys_offset
+        desired_xs_nom = desired_xs_nom + desired_xs_offset
+
+        desired_footsteps_body_frame = torch.cat((desired_xs_nom.unsqueeze(2), desired_ys_nom.unsqueeze(2)), dim=2)
+
+        err_raibert_heuristic = torch.abs(desired_footsteps_body_frame - footsteps_in_body_frame[:, :, 0:2])
+
+        reward = torch.sum(torch.square(err_raibert_heuristic), dim=(1, 2))
+
+        return reward
+    
+    def _reward_raibert_heuristic_trot(self):
+        cur_footsteps_translated = self.feet_pos - self.base_pos.unsqueeze(1)
+        footsteps_in_body_frame = torch.zeros(self.num_envs, 4, 3, device=self.device)
+        for i in range(4):
+            footsteps_in_body_frame[:, i, :] = quat_apply_yaw(quat_conjugate(self.base_quat),
+                                                              cur_footsteps_translated[:, i, :])
+
+        # nominal positions: [FR, FL, RR, RL]
+        if self.cfg.commands.num_commands >= 13:
+            desired_stance_width = self.commands[:, 12:13]
+            desired_ys_nom = torch.cat([desired_stance_width / 2, -desired_stance_width / 2, desired_stance_width / 2, -desired_stance_width / 2], dim=1)
+        else:
+            desired_stance_width = 0.35
+            desired_ys_nom = torch.tensor([desired_stance_width / 2,  -desired_stance_width / 2, desired_stance_width / 2, -desired_stance_width / 2], device=self.device).unsqueeze(0)
+
+        if self.cfg.commands.num_commands >= 14:
+            desired_stance_length = self.commands[:, 13:14]
+            desired_xs_nom = torch.cat([desired_stance_length / 2, desired_stance_length / 2, -desired_stance_length / 2, -desired_stance_length / 2], dim=1)
+        else:
+            desired_stance_length = 0.40
+            desired_xs_nom = torch.tensor([desired_stance_length / 2,  desired_stance_length / 2, -desired_stance_length / 2, -desired_stance_length / 2], device=self.device).unsqueeze(0)
+
+        # raibert offsets
+        foot_indices = self._get_foot_indices_trot()
+        phases = torch.abs(1.0 - (foot_indices * 2.0)) * 1.0 - 0.5
+        # frequencies = self.commands[:, 4]
+        frequencies = 1.0
+        frequencies = torch.ones(self.num_envs, device=self.device) * frequencies
+        x_vel_des = self.commands[:, 0:1]
+        yaw_vel_des = self.commands[:, 2:3]
+        y_vel_des = yaw_vel_des * desired_stance_length / 2
+        desired_ys_offset = phases * y_vel_des * (0.5 / frequencies.unsqueeze(1))
+        desired_ys_offset[:, 2:4] *= -1
+        desired_xs_offset = phases * x_vel_des * (0.5 / frequencies.unsqueeze(1))
+
+        desired_ys_nom = desired_ys_nom + desired_ys_offset
+        desired_xs_nom = desired_xs_nom + desired_xs_offset
+
+        desired_footsteps_body_frame = torch.cat((desired_xs_nom.unsqueeze(2), desired_ys_nom.unsqueeze(2)), dim=2)
+
+        err_raibert_heuristic = torch.abs(desired_footsteps_body_frame - footsteps_in_body_frame[:, :, 0:2])
+
+        reward = torch.sum(torch.square(err_raibert_heuristic), dim=(1, 2))
+
+        return reward
+

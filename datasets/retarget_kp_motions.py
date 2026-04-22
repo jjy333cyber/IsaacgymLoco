@@ -1,4 +1,42 @@
-"""Retarget motions from keypoint (.txt) files."""
+"""Retarget motions from keypoint (.txt) files.
+
+输入数据格式（keypoint joint pos .txt）
+-------------------------------
+本脚本读取 `ai4animation/*_joint_pos.txt` 这类关键点文件：
+
+- 文件内容：CSV（逗号分隔）的纯数字文本。
+- 每一行表示一帧（frame）。
+- 每帧是扁平的一维数组：按“关节索引顺序”依次拼接每个关节的 (x, y, z)。
+  设关节数为 N，则每行共有 N*3 个浮点数。
+- 代码中读取后：
+  - `load_ref_data()` 返回 shape 为 (T, N*3)
+  - 随后 reshape 为 (T, N, 3)，即 `joint_pos_data[t, j]` 是第 t 帧第 j 个关节的三维坐标。
+
+注意：N 取决于数据集骨架；当前默认使用的参考索引（如 `REF_TOE_JOINT_IDS=[10,15,19,23]`）
+暗含 N >= 24。
+
+重定向输出格式（mocap 动作 .txt）
+-----------------------------
+输出通过 `retarget_utils.output_motion()` 写成一个 JSON（文本）文件，字段包括：
+
+- `FrameDuration`: 每帧时长（秒），来自 `FRAME_DURATION`。
+- `MotionWeight`: 动作权重（用于训练/采样），来自 config。
+- `Frames`: 一个二维数组，shape 为 (T-1, D)。每个元素是一帧的 D 维浮点向量。
+
+本脚本当前的 D=61，字段顺序如下（与下方常量尺寸一致）：
+
+1) root_pos (3): 世界系基座位置 (x,y,z)
+2) root_rot (4): 世界系基座四元数 (x,y,z,w)
+3) joint_pose (12): 12 个关节角（单位：弧度；顺序与 URDF 的关节顺序/`default_pose` 一致）
+4) tar_toe_pos_local (12): 4 个脚端位置（每脚 xyz，共 12），由各腿 FK 计算得到的“局部/基座参考”脚端位置
+5) linear_vel (3): 基座线速度，转换到基座坐标系（base frame）
+6) angular_vel (3): 基座角速度，转换到基座坐标系（base frame，并相对 INIT_ROT 做了修正）
+7) joint_vel (12): 关节角速度（差分 / FrameDuration）
+8) tar_toe_vel_local (12): 脚端速度（对 tar_toe_pos_local 做差分 / FrameDuration）
+
+此外，输出前会把所有帧的 root_pos 的前两维 (x,y) 减去首帧 (x0,y0)，使轨迹从原点开始。
+"""
+import os
 import sys
 from pathlib import Path
 LEGGED_GYM_ROOT_DIR = str(Path(__file__).resolve().parent.parent / 'legged_gym')
@@ -20,8 +58,9 @@ import legged_gym.utils.kinematics.urdf as pk
 import pybullet_data as pd
 
 from retarget_utils import *
-# import retarget_config_a1 as config
-import retarget_config_aliengo as config
+import retarget_config_a1 as config
+# import retarget_config_aliengo as config
+# import retarget_config_lite3 as config
 
 POS_SIZE = 3
 ROT_SIZE = 4
@@ -50,14 +89,26 @@ REF_NECK_JOINT_ID = 3
 REF_TOE_JOINT_IDS = [10, 15, 19, 23]
 REF_HIP_JOINT_IDS = [6, 11, 16, 20]
 
+# chain_foot_fl = pk.build_serial_chain_from_urdf(
+#     open(config.URDF_FILENAME).read(), config.FL_FOOT_NAME)
+# chain_foot_fr = pk.build_serial_chain_from_urdf(
+#     open(config.URDF_FILENAME).read(), config.FR_FOOT_NAME)
+# chain_foot_rl = pk.build_serial_chain_from_urdf(
+#     open(config.URDF_FILENAME).read(), config.HL_FOOT_NAME)
+# chain_foot_rr = pk.build_serial_chain_from_urdf(
+#     open(config.URDF_FILENAME).read(), config.HR_FOOT_NAME)
+
+with open(config.URDF_FILENAME, "rb") as f:
+    urdf_data = f.read()
+
 chain_foot_fl = pk.build_serial_chain_from_urdf(
-    open(config.URDF_FILENAME).read(), config.FL_FOOT_NAME)
+    urdf_data, config.FL_FOOT_NAME)
 chain_foot_fr = pk.build_serial_chain_from_urdf(
-    open(config.URDF_FILENAME).read(), config.FR_FOOT_NAME)
+    urdf_data, config.FR_FOOT_NAME)
 chain_foot_rl = pk.build_serial_chain_from_urdf(
-    open(config.URDF_FILENAME).read(), config.HL_FOOT_NAME)
+    urdf_data, config.HL_FOOT_NAME)
 chain_foot_rr = pk.build_serial_chain_from_urdf(
-    open(config.URDF_FILENAME).read(), config.HR_FOOT_NAME)
+    urdf_data, config.HR_FOOT_NAME)
 
 
 def build_markers(num_markers):
@@ -305,6 +356,11 @@ def update_camera(robot):
 
 
 def load_ref_data(JOINT_POS_FILENAME, FRAME_START, FRAME_END):
+  """读取关键点 joint pos 数据。
+
+  返回：
+    joint_pos_data: shape (T, N*3) 的 numpy 数组（尚未 reshape）。
+  """
   joint_pos_data = np.loadtxt(JOINT_POS_FILENAME, delimiter=",")
 
   start_frame = 0 if (FRAME_START is None) else FRAME_START
@@ -315,6 +371,14 @@ def load_ref_data(JOINT_POS_FILENAME, FRAME_START, FRAME_END):
 
 
 def retarget_motion(robot, joint_pos_data):
+  """把参考关键点序列重定向为机器人动作序列。
+
+  输入：
+    joint_pos_data: shape (T, N, 3)，每帧每关节的三维位置。
+
+  输出：
+    new_frames: shape (T-1, 61)，每帧为 [pose(31), base_lin_vel(3), base_ang_vel(3), joint_vel(12), toe_vel(12)]。
+  """
   num_frames = joint_pos_data.shape[0]
 
   time_between_frames = FRAME_DURATION
@@ -335,6 +399,8 @@ def retarget_motion(robot, joint_pos_data):
                               next_ref_joint_pos)
 
     if f == 0:
+      # curr_pose = [root_pos(3), root_rot(4), joint_pose(12), tar_toe_pos_local(12)] => 31
+      # 追加速度项：linear_vel(3), angular_vel(3), joint_vel(12), toe_vel(12) => 总计 61
       pose_size = curr_pose.shape[
           -1] + LINEAR_VEL_SIZE + ANGULAR_VEL_SIZE + JOINT_POS_SIZE + TAR_TOE_VEL_LOCAL_SIZE
       new_frames = np.zeros([num_frames - 1, pose_size])
@@ -417,6 +483,14 @@ def main(argv):
         config.INIT_POS,
         config.INIT_ROT,
         flags=p.URDF_MAINTAIN_LINK_ORDER)
+    
+    num_joints = pybullet.getNumJoints(robot)
+    print("Total joints:", num_joints)
+
+    for i in range(num_joints):
+        info = pybullet.getJointInfo(robot, i)
+        print(i, info[1].decode("utf-8"))
+
     # Set robot to default pose to bias knees in the right direction.
     set_pose(
         robot,
@@ -426,12 +500,14 @@ def main(argv):
     print(f"Re-targeting {mocap_motion}")
 
     p.removeAllUserDebugItems()
+    # 读取原始关键点：shape (T, N*3)
     joint_pos_data = load_ref_data(mocap_motion[1], mocap_motion[2],
-                                   mocap_motion[3] + 1)
+                     mocap_motion[3] + 1)
 
     if "reverse" in mocap_motion[0]:
       joint_pos_data = np.flip(joint_pos_data, axis=0)
 
+    # reshape 后：shape (T, N, 3)
     joint_pos_data = joint_pos_data.reshape(joint_pos_data.shape[0], -1, POS_SIZE)
     for i in range(joint_pos_data.shape[0]):
       joint_pos_data[i] = process_ref_joint_pos_data(joint_pos_data[i])

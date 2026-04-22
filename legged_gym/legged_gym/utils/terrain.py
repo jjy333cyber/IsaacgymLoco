@@ -121,19 +121,20 @@ class Terrain:
         slope = min(difficulty * 0.5, 0.4)  # [0.0, ..., 0.40]
         amplitude = min(0.02 + 0.1 * difficulty, 0.06)  # [0.02, 0.03..., 0.06]
 
-        def calculate_step_height(difficulty):
-            # [0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.16, 0.175, 0.19, 0.205]
-            if difficulty < 0.5:
-                step_height = 0.06 + 0.2 * difficulty
-            elif difficulty in [0.5, 0.6]:
-                step_height = 0.16
-            else:
-                height_at_06 = 0.16
-                step_height = height_at_06 + 0.15 * (difficulty - 0.6)
-            return step_height
-        step_height = calculate_step_height(difficulty)
+        # def calculate_step_height(difficulty):
+        #     # [0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.16, 0.175, 0.19, 0.205]
+        #     if difficulty < 0.5:
+        #         step_height = 0.06 + 0.2 * difficulty
+        #     elif difficulty in [0.5, 0.6]:
+        #         step_height = 0.16
+        #     else:
+        #         height_at_06 = 0.16
+        #         step_height = height_at_06 + 0.15 * (difficulty - 0.6)
+        #     return step_height
+        # step_height = calculate_step_height(difficulty)
+        step_height = 0.05 + 0.2 * difficulty
 
-        discrete_obstacles_height = 0.03 + difficulty * 0.1  # [0.03, 0.04, ..., 0.08, 0.09, ..., 0.12]
+        discrete_obstacles_height = 0.03 + difficulty * 0.2  # [0.03, 0.04, ..., 0.08, 0.09, ..., 0.12]
         stepping_stones_size = 1.5 * (1.05 - difficulty)
         stone_distance = 0.05 if difficulty==0 else 0.1
         gap_size = 1. * difficulty
@@ -179,11 +180,10 @@ class Terrain:
         elif choice < self.proportions[3]:  # 斜坡+粗糙地面起伏地形
             terrain_utils.pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
             terrain_utils.random_uniform_terrain(terrain, min_height=-amplitude, max_height=amplitude, step=0.005, downsampled_scale=0.2)
+        elif choice < self.proportions[4]:  
+            pyramid_stairs_terrain(terrain, step_width=0.31, step_height=-step_height, platform_size=3., border_width=1.)
         elif choice < self.proportions[5]:  # 台阶地形
-            if choice<self.proportions[4]:  # 上台阶
-                step_height *= -1
-            # 下台阶
-            pyramid_stairs_terrain(terrain, step_width=0.30, step_height=step_height, platform_size=3., border_width=1.)
+            pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3., border_width=1.)
         elif choice < self.proportions[6]:  # 离散障碍物
             num_rectangles = 50
             rectangle_min_size = 0.6

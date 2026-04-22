@@ -213,6 +213,7 @@ class AlienGoStairsCfg( AlienGoRoughCfg ):
         base_height_target = 0.47
         feet_height_target_base = -0.32
         feet_height_target_terrain = 0.15
+        target_foot_height_yaw = 0.1  # feet height
         max_contact_force = 100.  # forces above this value are penalized
 
 
@@ -230,6 +231,6 @@ class AlienGoStairsCfgPPO( AlienGoRoughCfgPPO ):
         experiment_name = 'stairs_aliengo'
         run_name = ''
         # load and resume
-        resume = True
-        load_run = osp.join(logs_root, 'flat_aliengo', 'Aug29_14-01-50_bigAng_newRewards_good')
+        # resume = True
+        # load_run = osp.join(logs_root, 'stairs_aliengo', 'Mar14_14-39-26_')
         checkpoint = -1  # -1 = last saved model

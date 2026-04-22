@@ -41,6 +41,24 @@ import numpy as np
 import os
 from datetime import datetime
 
+
+def _ensure_numpy_compat_aliases():
+    # Compatibility for older Isaac Gym / PyTorch-era dependencies that still
+    # reference NumPy aliases removed in NumPy >= 1.24.
+    for alias, value in {
+        "bool": bool,
+        "int": int,
+        "float": float,
+        "complex": complex,
+        "object": object,
+        "str": str,
+    }.items():
+        if not hasattr(np, alias):
+            setattr(np, alias, value)
+
+
+_ensure_numpy_compat_aliases()
+
 import isaacgym
 from legged_gym.envs import *
 from legged_gym.utils import get_args, task_registry
