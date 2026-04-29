@@ -280,6 +280,7 @@ class LeggedRobot(BaseTask):
 
         # 四足的 接触力 是否 > 1，来判断是否接触地面
         contact = self.contact_forces[:, self.feet_indices, 2] > 1.
+        self.prev_contacts[:] = self.last_contacts
         self.contact_filt = torch.logical_or(contact, self.last_contacts)
         self.last_contacts = contact
 
@@ -684,6 +685,19 @@ class LeggedRobot(BaseTask):
                 props[i].mass = scale * self.default_rigid_body_mass[i]
 
         return props
+
+    def _sample_com_displacement(self, num_envs):
+        com_range = self.cfg.domain_rand.com_displacement_range
+        if isinstance(com_range, dict):
+            x_range = com_range.get("x", [0.0, 0.0])
+            y_range = com_range.get("y", [0.0, 0.0])
+            z_range = com_range.get("z", [0.0, 0.0])
+            return torch.cat((
+                torch_rand_float(x_range[0], x_range[1], (num_envs, 1), device=self.device),
+                torch_rand_float(y_range[0], y_range[1], (num_envs, 1), device=self.device),
+                torch_rand_float(z_range[0], z_range[1], (num_envs, 1), device=self.device),
+            ), dim=1)
+        return torch_rand_float(com_range[0], com_range[1], (num_envs, 3), device=self.device)
     
     def _post_physics_step_callback(self):
         """ Callback called before computing terminations, rewards, and observations
@@ -1087,6 +1101,7 @@ class LeggedRobot(BaseTask):
         self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel], device=self.device, requires_grad=False,) # TODO change this
 
         self.feet_air_time = torch.zeros(self.num_envs, self.feet_indices.shape[0], dtype=torch.float, device=self.device, requires_grad=False)
+        self.prev_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
         self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
 
         self.base_pose = self.root_states[:, 0:7]
@@ -1156,7 +1171,7 @@ class LeggedRobot(BaseTask):
         if self.cfg.domain_rand.randomize_payload_mass:
             self.payload = torch_rand_float(self.cfg.domain_rand.payload_mass_range[0], self.cfg.domain_rand.payload_mass_range[1], (self.num_envs, 1), device=self.device)
         if self.cfg.domain_rand.randomize_com_displacement:
-            self.com_displacement = torch_rand_float(self.cfg.domain_rand.com_displacement_range[0], self.cfg.domain_rand.com_displacement_range[1], (self.num_envs, 3), device=self.device)
+            self.com_displacement = self._sample_com_displacement(self.num_envs)
             
         #store friction and restitution
         self.friction_coeffs = torch.ones(self.num_envs, 1, dtype=torch.float, device=self.device, requires_grad=False)
@@ -1307,7 +1322,7 @@ class LeggedRobot(BaseTask):
             self.payload = torch_rand_float(self.cfg.domain_rand.payload_mass_range[0], self.cfg.domain_rand.payload_mass_range[1], (self.num_envs, 1), device=self.device)
         # 获取给base的 位置（xyz）加减的范围
         if self.cfg.domain_rand.randomize_com_displacement:
-            self.com_displacement = torch_rand_float(self.cfg.domain_rand.com_displacement_range[0], self.cfg.domain_rand.com_displacement_range[1], (self.num_envs, 3), device=self.device)
+            self.com_displacement = self._sample_com_displacement(self.num_envs)
 
         # 创建每一个env
         for i in range(self.num_envs):
@@ -1974,6 +1989,20 @@ class LeggedRobot(BaseTask):
         # 惩罚 四足的接触力 > 100N
         return torch.sum((torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) -  self.cfg.rewards.max_contact_force).clip(min=0.), dim=1)
 
+    def _reward_feet_soft_landing(self):
+        contact_threshold = getattr(self.cfg.rewards, "soft_landing_contact_threshold", 1.0)
+        contact = self.contact_forces[:, self.feet_indices, 2] > contact_threshold
+        first_contact = contact & ~self.prev_contacts
+
+        max_z_vel = getattr(self.cfg.rewards, "soft_landing_max_z_vel", 0.25)
+        max_force = getattr(self.cfg.rewards, "soft_landing_max_force", 80.0)
+        force_weight = getattr(self.cfg.rewards, "soft_landing_force_weight", 0.25)
+
+        down_vel_excess = torch.clamp(-self.feet_vel[:, :, 2] - max_z_vel, min=0.0)
+        force_excess = torch.clamp(self.contact_forces[:, self.feet_indices, 2] - max_force, min=0.0) / max(max_force, 1e-6)
+        impact = torch.square(down_vel_excess) + force_weight * torch.square(force_excess)
+        return torch.sum(first_contact.float() * impact, dim=1)
+
     def _reward_feet_mirror(self):
         # 惩罚 斜对称腿的关节位置偏差
         diff1 = torch.sum(torch.square(self.dof_pos[:, [1, 2]] - self.dof_pos[:, [10, 11]]),dim=-1)
@@ -2386,4 +2415,3 @@ class LeggedRobot(BaseTask):
         reward = torch.sum(torch.square(err_raibert_heuristic), dim=(1, 2))
 
         return reward
-

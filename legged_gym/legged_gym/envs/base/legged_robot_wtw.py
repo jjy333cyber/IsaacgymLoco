@@ -282,6 +282,7 @@ class LeggedRobotwtw(BaseTask):
 
         # 四足的 接触力 是否 > 1，来判断是否接触地面
         contact = self.contact_forces[:, self.feet_indices, 2] > 1.
+        self.prev_contacts[:] = self.last_contacts
         self.contact_filt = torch.logical_or(contact, self.last_contacts)
         self.last_contacts = contact
 
@@ -692,6 +693,19 @@ class LeggedRobotwtw(BaseTask):
                 props[i].mass = scale * self.default_rigid_body_mass[i]
 
         return props
+
+    def _sample_com_displacement(self, num_envs):
+        com_range = self.cfg.domain_rand.com_displacement_range
+        if isinstance(com_range, dict):
+            x_range = com_range.get("x", [0.0, 0.0])
+            y_range = com_range.get("y", [0.0, 0.0])
+            z_range = com_range.get("z", [0.0, 0.0])
+            return torch.cat((
+                torch_rand_float(x_range[0], x_range[1], (num_envs, 1), device=self.device),
+                torch_rand_float(y_range[0], y_range[1], (num_envs, 1), device=self.device),
+                torch_rand_float(z_range[0], z_range[1], (num_envs, 1), device=self.device),
+            ), dim=1)
+        return torch_rand_float(com_range[0], com_range[1], (num_envs, 3), device=self.device)
     
     def _post_physics_step_callback(self):
         """ Callback called before computing terminations, rewards, and observations
@@ -1209,6 +1223,7 @@ class LeggedRobotwtw(BaseTask):
         self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel], device=self.device, requires_grad=False,) # TODO change this
         
         self.feet_air_time = torch.zeros(self.num_envs, self.feet_indices.shape[0], dtype=torch.float, device=self.device, requires_grad=False)
+        self.prev_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
         self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
 
         self.base_pose = self.root_states[:, 0:7]
@@ -1278,7 +1293,7 @@ class LeggedRobotwtw(BaseTask):
         if self.cfg.domain_rand.randomize_payload_mass:
             self.payload = torch_rand_float(self.cfg.domain_rand.payload_mass_range[0], self.cfg.domain_rand.payload_mass_range[1], (self.num_envs, 1), device=self.device)
         if self.cfg.domain_rand.randomize_com_displacement:
-            self.com_displacement = torch_rand_float(self.cfg.domain_rand.com_displacement_range[0], self.cfg.domain_rand.com_displacement_range[1], (self.num_envs, 3), device=self.device)
+            self.com_displacement = self._sample_com_displacement(self.num_envs)
             
         #store friction and restitution
         self.friction_coeffs = torch.ones(self.num_envs, 1, dtype=torch.float, device=self.device, requires_grad=False)
@@ -1474,7 +1489,7 @@ class LeggedRobotwtw(BaseTask):
             self.payload = torch_rand_float(self.cfg.domain_rand.payload_mass_range[0], self.cfg.domain_rand.payload_mass_range[1], (self.num_envs, 1), device=self.device)
         # 获取给base的 位置（xyz）加减的范围
         if self.cfg.domain_rand.randomize_com_displacement:
-            self.com_displacement = torch_rand_float(self.cfg.domain_rand.com_displacement_range[0], self.cfg.domain_rand.com_displacement_range[1], (self.num_envs, 3), device=self.device)
+            self.com_displacement = self._sample_com_displacement(self.num_envs)
 
         # 创建每一个env
         for i in range(self.num_envs):
@@ -2111,6 +2126,20 @@ class LeggedRobotwtw(BaseTask):
         # 惩罚 四足的接触力 > 100N
         return torch.sum((torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) -  self.cfg.rewards.max_contact_force).clip(min=0.), dim=1)
 
+    def _reward_feet_soft_landing(self):
+        contact_threshold = getattr(self.cfg.rewards, "soft_landing_contact_threshold", 1.0)
+        contact = self.contact_forces[:, self.feet_indices, 2] > contact_threshold
+        first_contact = contact & ~self.prev_contacts
+
+        max_z_vel = getattr(self.cfg.rewards, "soft_landing_max_z_vel", 0.25)
+        max_force = getattr(self.cfg.rewards, "soft_landing_max_force", 80.0)
+        force_weight = getattr(self.cfg.rewards, "soft_landing_force_weight", 0.25)
+
+        down_vel_excess = torch.clamp(-self.feet_vel[:, :, 2] - max_z_vel, min=0.0)
+        force_excess = torch.clamp(self.contact_forces[:, self.feet_indices, 2] - max_force, min=0.0) / max(max_force, 1e-6)
+        impact = torch.square(down_vel_excess) + force_weight * torch.square(force_excess)
+        return torch.sum(first_contact.float() * impact, dim=1)
+
     def _reward_feet_mirror(self):
         # 惩罚 斜对称腿的关节位置偏差
         diff1 = torch.sum(torch.square(self.dof_pos[:, [1, 2]] - self.dof_pos[:, [10, 11]]),dim=-1)
@@ -2122,17 +2151,28 @@ class LeggedRobotwtw(BaseTask):
         return 0.5 * (diff1 + diff2) * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
 
     # --- stand, stuck ---
+    def _tracking_relief_scale(self):
+        if not getattr(self.cfg.rewards, "tracking_relief_enabled", False):
+            return torch.ones(self.num_envs, device=self.device)
+
+        tilt = torch.norm(self.projected_gravity[:, :2], dim=1)
+        start = getattr(self.cfg.rewards, "tracking_relief_tilt_start", 0.25)
+        end = getattr(self.cfg.rewards, "tracking_relief_tilt_end", 0.55)
+        min_scale = getattr(self.cfg.rewards, "tracking_relief_min_scale", 0.2)
+        relief = torch.clamp((tilt - start) / max(end - start, 1e-6), min=0.0, max=1.0)
+        return 1.0 - relief * (1.0 - min_scale)
+
     def _reward_stand_still(self):
         # 惩罚 (base原地不动 或 原地旋转) 时的 关节位置与默认关节位置的 偏差
         condition = torch.norm(self.commands[:, :3], dim=1) < 0.1  # commands 中XY方向线速度 < 0.1 m/s (不论角速度大小，都会受到惩罚)
         dof_deviation = torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)
-        return dof_deviation * condition.float()
+        return dof_deviation * condition.float() * self._tracking_relief_scale()
 
     def _reward_stand_nice(self):
         # 惩罚 (base原地不动 或 原地旋转) 且 重力投影向下时 的 关节位置与默认关节位置的 偏差
         condition = (torch.norm(self.commands[:, :2], dim=1) < 0.2) * (1 - self.projected_gravity[:, 2])
         dof_deviation = torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)
-        return dof_deviation * condition.float()
+        return dof_deviation * condition.float() * self._tracking_relief_scale()
 
     def _reward_stuck(self):
         # 惩罚 卡住
@@ -2160,35 +2200,35 @@ class LeggedRobotwtw(BaseTask):
         #   XY方向线速度 >= 0.1 m/s 时，惩罚力度为 1.0
         condition = torch.norm(self.commands[:, :3], dim=1) < 0.1
         multiplier = 1.0 + condition.float() * 4.0
-        return hip_deviation * multiplier
+        return hip_deviation * multiplier * self._tracking_relief_scale()
     
     def _reward_hip_pos_up(self):
         hip_deviation = torch.sum(torch.abs(self.dof_pos[:, [0, 3, 6, 9]] - self.default_dof_pos[:, [0, 3, 6, 9]]), dim=1)
         condition = torch.norm(self.commands[:, :2], dim=1) < 0.2
         multiplier = 1.0 + condition.float() * 4.0
-        return hip_deviation * multiplier * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
+        return hip_deviation * multiplier * torch.clamp(-self.projected_gravity[:, 2], 0, 1) * self._tracking_relief_scale()
 
     def _reward_thigh_pose(self):
         thigh_deviation = torch.sum(torch.abs(self.dof_pos[:, [1, 4, 7, 10]] - self.default_dof_pos[:, [1, 4, 7, 10]]), dim=1)
         condition = torch.norm(self.commands[:, :3], dim=1) < 0.1
         multiplier = 1.0 + condition.float() * 4.0
-        return thigh_deviation * multiplier
+        return thigh_deviation * multiplier * self._tracking_relief_scale()
     def _reward_thigh_pose_up(self):
         thigh_deviation = torch.sum(torch.abs(self.dof_pos[:, [1, 4, 7, 10]] - self.default_dof_pos[:, [1, 4, 7, 10]]), dim=1)
         condition = torch.norm(self.commands[:, :2], dim=1) < 0.2
         multiplier = 1.0 + condition.float() * 4.0
-        return thigh_deviation * multiplier * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
+        return thigh_deviation * multiplier * torch.clamp(-self.projected_gravity[:, 2], 0, 1) * self._tracking_relief_scale()
 
     def _reward_calf_pose(self):
         calf_deviation = torch.sum(torch.abs(self.dof_pos[:, [2, 5, 8, 11]] - self.default_dof_pos[:, [2, 5, 8, 11]]), dim=1)
         condition = torch.norm(self.commands[:, :3], dim=1) < 0.1
         multiplier = 1.0 + condition.float() * 4.0
-        return calf_deviation * multiplier
+        return calf_deviation * multiplier * self._tracking_relief_scale()
     def _reward_calf_pose_up(self):
         calf_deviation = torch.sum(torch.abs(self.dof_pos[:, [2, 5, 8, 11]] - self.default_dof_pos[:, [2, 5, 8, 11]]), dim=1)
         condition = torch.norm(self.commands[:, :2], dim=1) < 0.2
         multiplier = 1.0 + condition.float() * 4.0
-        return calf_deviation * multiplier * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
+        return calf_deviation * multiplier * torch.clamp(-self.projected_gravity[:, 2], 0, 1) * self._tracking_relief_scale()
 
     # --- 四足离地高度 ---
     def _reward_feet_clearance_base(self):
@@ -2273,24 +2313,133 @@ class LeggedRobotwtw(BaseTask):
 
 #####################_reward_wtw###################################
 
+    def _jump_motion_mask(self):
+        min_speed = getattr(self.cfg.rewards, "jump_min_command_speed", 0.2)
+        min_yaw = getattr(self.cfg.rewards, "jump_min_yaw_speed", 0.05)
+        return (torch.norm(self.commands[:, :2], dim=1) > min_speed) | (torch.abs(self.commands[:, 2]) > min_yaw)
+
+    def _jump_contact_mask(self):
+        threshold = getattr(self.cfg.rewards, "jump_contact_force_threshold", 5.0)
+        return self.contact_forces[:, self.feet_indices, 2] > threshold
+
+    def _jump_all_air_mask(self):
+        return torch.logical_not(torch.any(self._jump_contact_mask(), dim=1))
+
     def _reward_jump(self):
         """
         Calculates a reward based on the number of feet contacts aligning with the gait phase. 
         Rewards or penalizes depending on whether the foot contact matches the expected gait phase.
         """
-        contact = self.contact_forces[:, self.feet_indices, 2] > 5.
-        # stance_mask = self._get_gait_phase_jump()
-        JUMP = (contact[:,0] == contact[:,1]) \
-            & (contact[:,1] == contact[:,2]) \
-            & (contact[:,2] == contact[:,3]) \
-            # & (contact[:,3] == stance_mask[:,0])
-        # print( JUMP.to(torch.float32).mean())
-        speed = torch.norm(self.commands[:, :2], dim=1)
-        condition = (torch.norm(self.commands[:, :2], dim=1) > 0.2) | (
-                    torch.abs(self.commands[:, 2]) > 0.05)  # commands XY方向线速度 > 0.1m/s 或 yaw方向角速度 > 0.05rad/s 时才奖励
-        JUMP *= condition
+        contact = self._jump_contact_mask()
+        if getattr(self.cfg.rewards, "jump_sync_air_only", False):
+            jump_sync = self._jump_all_air_mask()
+        else:
+            # Reward synchronous four-leg contact state: all stance or all flight.
+            jump_sync = (contact[:, 0] == contact[:, 1]) & \
+                        (contact[:, 1] == contact[:, 2]) & \
+                        (contact[:, 2] == contact[:, 3])
+        return jump_sync.float() * self._jump_motion_mask().float()
 
-        return JUMP
+    def _reward_jump_air_time(self):
+        """Per-step reward for keeping all feet airborne during jump commands."""
+        return self._jump_all_air_mask().float() * self._jump_motion_mask().float()
+
+    def _reward_jump_height(self):
+        """Bounded all-air reward that increases as base height reaches the configured target."""
+        base_height = self._get_base_heights()
+        start_height = getattr(self.cfg.rewards, "jump_height_min", self.cfg.rewards.base_height_target)
+        target_height = getattr(self.cfg.rewards, "jump_height_target", start_height + 0.1)
+        height_span = max(target_height - start_height, 1e-6)
+        height_reward = torch.clamp((base_height - start_height) / height_span, min=0.0, max=1.0)
+        return height_reward * self._jump_all_air_mask().float() * self._jump_motion_mask().float()
+
+    def _reward_jump_z_vel(self):
+        """Bounded all-air reward for upward base velocity during jump commands."""
+        start_vel = getattr(self.cfg.rewards, "jump_z_vel_min", 0.0)
+        target_vel = getattr(self.cfg.rewards, "jump_z_vel_target", start_vel + 0.5)
+        vel_span = max(target_vel - start_vel, 1e-6)
+        vel_reward = torch.clamp((self.base_lin_vel[:, 2] - start_vel) / vel_span, min=0.0, max=1.0)
+        return vel_reward * self._jump_all_air_mask().float() * self._jump_motion_mask().float()
+
+    def _jump_phase_lerp(self, phase, start, end, start_value, end_value):
+        ratio = torch.clamp((phase - start) / max(end - start, 1e-6), min=0.0, max=1.0)
+        return start_value + ratio * (end_value - start_value)
+
+    def _get_jump_reference(self):
+        phase = torch.remainder(self.gait_indices, 1.0)
+
+        compress_end = getattr(self.cfg.rewards, "jump_phase_compress_end", 0.15)
+        push_end = getattr(self.cfg.rewards, "jump_phase_push_end", 0.35)
+        flight_end = getattr(self.cfg.rewards, "jump_phase_flight_end", 0.70)
+        land_end = getattr(self.cfg.rewards, "jump_phase_land_end", 0.85)
+        flight_mid = push_end + 0.5 * max(flight_end - push_end, 1e-6)
+
+        h_stance = getattr(self.cfg.rewards, "jump_ref_height_stance", self.cfg.rewards.base_height_target)
+        h_compress = getattr(self.cfg.rewards, "jump_ref_height_compress", h_stance)
+        h_takeoff = getattr(self.cfg.rewards, "jump_ref_height_takeoff", h_stance)
+        h_apex = getattr(self.cfg.rewards, "jump_ref_height_apex", h_takeoff)
+        h_land = getattr(self.cfg.rewards, "jump_ref_height_land", h_stance)
+
+        foot_stance = getattr(self.cfg.rewards, "jump_ref_foot_height_stance", 0.02)
+        foot_flight = getattr(self.cfg.rewards, "jump_ref_foot_height_flight", self.cfg.rewards.target_foot_height)
+
+        ref_height = torch.ones_like(phase) * h_stance
+        ref_z_vel = torch.zeros_like(phase)
+        ref_foot_height = torch.ones_like(phase) * foot_stance
+        ref_contact = torch.ones(self.num_envs, len(self.feet_indices), device=self.device)
+
+        compress = phase < compress_end
+        push = (phase >= compress_end) & (phase < push_end)
+        flight_up = (phase >= push_end) & (phase < flight_mid)
+        flight_down = (phase >= flight_mid) & (phase < flight_end)
+        landing = (phase >= flight_end) & (phase < land_end)
+        recovery = phase >= land_end
+        flight = flight_up | flight_down
+
+        ref_height = torch.where(compress, self._jump_phase_lerp(phase, 0.0, compress_end, h_stance, h_compress), ref_height)
+        ref_height = torch.where(push, self._jump_phase_lerp(phase, compress_end, push_end, h_compress, h_takeoff), ref_height)
+        ref_height = torch.where(flight_up, self._jump_phase_lerp(phase, push_end, flight_mid, h_takeoff, h_apex), ref_height)
+        ref_height = torch.where(flight_down, self._jump_phase_lerp(phase, flight_mid, flight_end, h_apex, h_land), ref_height)
+        ref_height = torch.where(landing, self._jump_phase_lerp(phase, flight_end, land_end, h_land, h_stance), ref_height)
+        ref_height = torch.where(recovery, h_stance + 0.0 * phase, ref_height)
+
+        ref_z_vel = torch.where(compress, torch.ones_like(phase) * getattr(self.cfg.rewards, "jump_ref_z_vel_compress", -0.2), ref_z_vel)
+        ref_z_vel = torch.where(push, torch.ones_like(phase) * getattr(self.cfg.rewards, "jump_ref_z_vel_push", 1.0), ref_z_vel)
+        ref_z_vel = torch.where(flight, torch.ones_like(phase) * getattr(self.cfg.rewards, "jump_ref_z_vel_flight", 0.0), ref_z_vel)
+        ref_z_vel = torch.where(landing, torch.ones_like(phase) * getattr(self.cfg.rewards, "jump_ref_z_vel_land", -0.2), ref_z_vel)
+
+        ref_foot_height = torch.where(flight, torch.ones_like(phase) * foot_flight, ref_foot_height)
+        ref_contact[flight, :] = 0.0
+
+        return ref_height, ref_z_vel, ref_foot_height, ref_contact
+
+    def _reward_jump_ref_base_height(self):
+        ref_height, _, _, _ = self._get_jump_reference()
+        base_height = self._get_base_heights()
+        err = torch.square(base_height - ref_height)
+        sigma = max(getattr(self.cfg.rewards, "jump_ref_sigma_height", 0.04), 1e-6)
+        return torch.exp(-err / sigma) * self._jump_motion_mask().float() * self._tracking_relief_scale()
+
+    def _reward_jump_ref_z_vel(self):
+        _, ref_z_vel, _, _ = self._get_jump_reference()
+        err = torch.square(self.base_lin_vel[:, 2] - ref_z_vel)
+        sigma = max(getattr(self.cfg.rewards, "jump_ref_sigma_z_vel", 0.4), 1e-6)
+        return torch.exp(-err / sigma) * self._jump_motion_mask().float() * self._tracking_relief_scale()
+
+    def _reward_jump_ref_foot_height(self):
+        _, _, ref_foot_height, ref_contact = self._get_jump_reference()
+        feet_height = self._get_feet_heights()
+        flight_weight = 1.0 - ref_contact
+        weight_sum = torch.clamp(torch.sum(flight_weight, dim=1), min=1.0)
+        err = torch.sum(torch.square(feet_height - ref_foot_height.unsqueeze(1)) * flight_weight, dim=1) / weight_sum
+        sigma = max(getattr(self.cfg.rewards, "jump_ref_sigma_foot", 0.04), 1e-6)
+        flight_active = torch.clamp(torch.mean(flight_weight, dim=1), min=0.0, max=1.0)
+        return torch.exp(-err / sigma) * flight_active * self._jump_motion_mask().float() * self._tracking_relief_scale()
+
+    def _reward_jump_ref_contact(self):
+        _, _, _, ref_contact = self._get_jump_reference()
+        contact = self._jump_contact_mask().float()
+        return (1.0 - torch.mean(torch.abs(contact - ref_contact), dim=1)) * self._jump_motion_mask().float() * self._tracking_relief_scale()
     
     def _reward_tracking_contacts_shaped_force(self):
         foot_forces = torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1)
@@ -2300,7 +2449,7 @@ class LeggedRobotwtw(BaseTask):
         for i in range(4):
             reward += - (1 - desired_contact[:, i]) * (
                         1 - torch.exp(-1 * foot_forces[:, i] ** 2 / self.cfg.rewards.gait_force_sigma))
-        return reward / 4
+        return reward / 4 * self._tracking_relief_scale()
     
     def _reward_tracking_contacts_shaped_force_exp(self):
         foot_forces = torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1)
@@ -2312,7 +2461,7 @@ class LeggedRobotwtw(BaseTask):
         #                 1 - torch.exp(-1 * foot_forces[:, i] ** 2 / self.cfg.rewards.gait_force_sigma))
         for i in range(4):
             reward += (1 - desired_contact[:, i]) * torch.exp(-1 * foot_forces[:, i] ** 2 / self.cfg.rewards.gait_force_sigma)
-        return reward / 4
+        return reward / 4 * self._tracking_relief_scale()
 
     def _reward_tracking_contacts_shaped_vel(self):
         foot_velocities = torch.norm(self.feet_vel, dim=2).view(self.num_envs, -1)
@@ -2321,7 +2470,7 @@ class LeggedRobotwtw(BaseTask):
         for i in range(4):
             reward += - (desired_contact[:, i] * (
                         1 - torch.exp(-1 * foot_velocities[:, i] ** 2 / self.cfg.rewards.gait_vel_sigma)))
-        return reward / 4
+        return reward / 4 * self._tracking_relief_scale()
     
     def _reward_tracking_contacts_shaped_vel_exp(self):
         foot_velocities = torch.norm(self.feet_vel, dim=2).view(self.num_envs, -1)
@@ -2332,7 +2481,7 @@ class LeggedRobotwtw(BaseTask):
         #                 1 - torch.exp(-1 * foot_velocities[:, i] ** 2 / self.cfg.rewards.gait_vel_sigma)))
         for i in range(4):
             reward += desired_contact[:, i] * torch.exp(-1 * foot_velocities[:, i] ** 2 / self.cfg.rewards.gait_vel_sigma)
-        return reward / 4
+        return reward / 4 * self._tracking_relief_scale()
 
     def _reward_feet_clearance_cmd_linear(self):
         # requires: foot phase (self.foot_indices), desired_contact_states, and swing height command at index 9
@@ -2343,7 +2492,7 @@ class LeggedRobotwtw(BaseTask):
         foot_height = self._get_feet_heights()
         target_height = self.cfg.rewards.target_foot_height * phases + 0.02 # offset for foot radius 2cm
         rew_foot_clearance = torch.square(target_height - foot_height) * (1 - self.desired_contact_states)
-        return torch.sum(rew_foot_clearance, dim=1)
+        return torch.sum(rew_foot_clearance, dim=1) * self._tracking_relief_scale()
 
     def _reward_raibert_heuristic(self):
         # if self.commands.shape[1] <= 4:

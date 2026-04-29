@@ -160,11 +160,16 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
 
     class domain_rand:
         # startup
-        randomize_payload_mass = True  # 是否随机改变 base的质量（默认质量 ±）
+        randomize_payload_mass = True  # 是否随机增加 base 的质量，模拟头部/载荷更重
         payload_mass_range = [-1.5, 4.0]
 
-        randomize_com_displacement = True  # 是否随机改变 base的质心偏移（xyz）
-        com_displacement_range = [-0.1, 0.1]
+        randomize_com_displacement = True  # 是否随机改变 base 的质心偏移（xyz）
+        com_displacement_range = dict(
+            x=[0.0, 0.08],
+            y=[-0.03, 0.03],
+            z=[-0.02, 0.02],
+        )
+        # [-0.1, 0.1]
 
         randomize_link_mass = False  # 是否随机更改env各刚体部位（除了base）的质量（默认质量 *）
         link_mass_range = [0.9, 1.1]
@@ -264,6 +269,7 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
             # has_contact = 5.0  # (base 原地不动) 时的 四足触地个数 奖励
             # feet_stumble = -0.0  # 四足接触到垂直表面 惩罚
             feet_slide = -0.05  # 脚接触地面具有相对base的速度 惩罚
+            feet_soft_landing = -1.0  # 首次触地过重惩罚：降低落脚声和砸地感
             # feet_clearance_base = -0.2  # 四足距base目标距离 惩罚
             # feet_clearance_terrain = -0.0  # 大速度下 四足离地目标高度 惩罚
             # feet_yaw_clearance_terrain = 2.0  # (base原地旋转) 时 脚抬起
@@ -290,6 +296,10 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
         feet_height_target_base = -0.28  # 足部距base的 相对距离目标（抬脚高度为0.15 以适应台阶地形）
         feet_height_target_terrain = 0.10  # 足部离地高度目标
         max_contact_force = 100.    # 四足接触力 > 100N 时触发惩罚的阈值
+        soft_landing_contact_threshold = 1.0
+        soft_landing_max_z_vel = 0.25
+        soft_landing_max_force = 70.0
+        soft_landing_force_weight = 0.25
         target_foot_height = 0.1  # feet height
         target_foot_height_yaw = 0.08  # feet height
         kappa_gait_probs = 0.07
