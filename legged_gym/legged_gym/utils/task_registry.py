@@ -139,10 +139,13 @@ class TaskRegistry():
 
         if log_root=="default":
             log_root = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name)
+            load_root = log_root
             log_dir = os.path.join(log_root, datetime.now().strftime('%b%d_%H-%M-%S') + '_' + train_cfg.runner.run_name)
         elif log_root is None:
+            load_root = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name)
             log_dir = None
         else:
+            load_root = log_root
             log_dir = os.path.join(log_root, datetime.now().strftime('%b%d_%H-%M-%S') + '_' + train_cfg.runner.run_name)
 
         log_cfg_dict = dict()
@@ -155,7 +158,7 @@ class TaskRegistry():
         runner_class = eval(train_cfg.runner_class_name)
         runner = runner_class(env, train_cfg_dict, log_dir, device=args.rl_device)
 
-        if save_cfg:
+        if save_cfg and log_dir is not None:
             os.makedirs(log_dir, exist_ok=True)
             with open(os.path.join(log_dir, "config.json"), "w") as f:
                 json.dump(log_cfg_dict, f, indent=4)
@@ -164,9 +167,9 @@ class TaskRegistry():
         resume = train_cfg.runner.resume
         if resume:
             # load previously trained model
-            resume_path = get_load_path(log_root, load_run=train_cfg.runner.load_run, checkpoint=train_cfg.runner.checkpoint)
+            resume_path = get_load_path(load_root, load_run=train_cfg.runner.load_run, checkpoint=train_cfg.runner.checkpoint)
             print(f"[INFO] Loading model from: {resume_path}")
-            if save_cfg:
+            if save_cfg and log_dir is not None:
                 shutil.copyfile(resume_path, os.path.join(log_dir, os.path.basename(resume_path)))
             runner.load(resume_path)    # , load_optimizer=False
         return runner, train_cfg

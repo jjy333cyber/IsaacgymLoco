@@ -117,11 +117,10 @@ class Cc1StairswtwCfg( Cc1RoughwtwCfg ):
 
         randomize_com_displacement = True
         com_displacement_range = dict(
-            x=[0.02, 0.12],
-            y=[-0.03, 0.03],
-            z=[-0.02, 0.02],
+            x=[-0.07, 0.07],
+            y=[-0.07, 0.07],
+            z=[-0.07, 0.07],
         )
-        # [-0.07, 0.07]
 
         randomize_link_mass = False
         link_mass_range = [0.9, 1.1]
@@ -216,7 +215,6 @@ class Cc1StairswtwCfg( Cc1RoughwtwCfg ):
             has_contact = 2.0  # 鼓励保持接触（提升稳定性，避免全腾空(base 原地不动)） 2.0
             feet_stumble = -2.0  # 绊倒/磕碰惩罚（足端撞到台阶边缘等） -2.0
             feet_slide = -0.01  # 足端打滑惩罚（接触时水平滑移）-0.01
-            feet_soft_landing = -0.5  # 首次触地过重惩罚，台阶任务稍弱以保留跨越能力
             # feet_clearance_base = -0.0  # 足端相对机身抬脚高度奖励（此处关闭）-0.0
             # feet_clearance_terrain = -0.0  # 足端相对地形抬脚高度奖励（此处关闭）-0.0
             # feet_yaw_clearance_terrain = 2.0  # base 原地旋转时鼓励抬脚，减少“拧着走/刮地” 1.0
@@ -237,10 +235,6 @@ class Cc1StairswtwCfg( Cc1RoughwtwCfg ):
         feet_height_target_base = -0.32  # 足端相对 base 的目标高度 [m]
         feet_height_target_terrain = 0.15  # 足端离地目标高度 [m]
         max_contact_force = 100.  # 接触力惩罚阈值 [N]（超过开始惩罚/截断）
-        soft_landing_contact_threshold = 1.0
-        soft_landing_max_z_vel = 0.35
-        soft_landing_max_force = 90.0
-        soft_landing_force_weight = 0.2
         target_foot_height = 0.15  # feet height
         target_foot_height_yaw = 0.1  # feet height
         kappa_gait_probs = 0.07

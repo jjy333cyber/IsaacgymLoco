@@ -63,7 +63,7 @@ class Logger:
         self.plot_process.start()
 
     def _plot(self):
-        nb_rows = 3
+        nb_rows = 4
         nb_cols = 3
         fig, axs = plt.subplots(nb_rows, nb_cols)
         for key, value in self.state_log.items():
@@ -123,6 +123,20 @@ class Logger:
         if log["dof_torque"]!=[]: a.plot(time, log["dof_torque"], label='measured')
         a.set(xlabel='time [s]', ylabel='Joint Torque [Nm]', title='Torque')
         a.legend()
+        # plot base height
+        a = axs[3, 0]
+        if log["base_height"]: a.plot(time, log["base_height"], label='base height')
+        if log["base_z"]: a.plot(time, log["base_z"], label='base z')
+        a.set(xlabel='time [s]', ylabel='height [m]', title='Base Height')
+        a.legend()
+        # plot base pitch
+        a = axs[3, 1]
+        if log["base_pitch"]: a.plot(time, log["base_pitch"], label='pitch')
+        if log["projected_gravity_x"]: a.plot(time, log["projected_gravity_x"], label='proj gravity x')
+        a.set(xlabel='time [s]', ylabel='rad / unit', title='Base Pitch')
+        a.legend()
+        axs[3, 2].axis('off')
+        fig.tight_layout()
         plt.show()
 
     def print_rewards(self):

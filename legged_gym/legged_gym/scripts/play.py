@@ -43,7 +43,7 @@ import os
 import isaacgym
 from isaacgym import gymapi
 from legged_gym.envs import *
-from legged_gym.utils import  get_args, export_policy_as_jit, task_registry, Logger
+from legged_gym.utils import  get_args, export_policy_as_jit, export_policy_as_onnx, task_registry, Logger
 
 import imageio
 import numpy as np
@@ -70,6 +70,27 @@ def _ensure_numpy_compat_aliases():
 _ensure_numpy_compat_aliases()
 
 from legged_gym.utils.helpers import update_class_from_dict
+
+
+PRINT_BASE_STATE = True
+BASE_STATE_PRINT_INTERVAL = 50
+
+
+def _get_policy_export_path(train_cfg):
+    return os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'policies')
+
+
+def _get_base_height(env, robot_index):
+    if hasattr(env, "_get_base_heights"):
+        return env._get_base_heights()[robot_index].item()
+    return env.root_states[robot_index, 2].item()
+
+
+def _get_base_pitch(env, robot_index):
+    # Isaac Gym root quaternion order is xyzw.
+    x, y, z, w = env.root_states[robot_index, 3:7]
+    sin_pitch = torch.clamp(2.0 * (w * y - z * x), -1.0, 1.0)
+    return torch.asin(sin_pitch).item()
 
 
 def play(args, x_vel=1.0, y_vel=0.0, yaw_vel=0.0):
@@ -111,15 +132,23 @@ def play(args, x_vel=1.0, y_vel=0.0, yaw_vel=0.0):
     obs = env.get_observations()
     # load policy
     train_cfg.runner.resume = True
-    ppo_runner, train_cfg = task_registry.make_alg_runner(env=env, name=args.task, args=args, train_cfg=train_cfg, save_cfg=False)
+    ppo_runner, train_cfg = task_registry.make_alg_runner(
+        env=env,
+        name=args.task,
+        args=args,
+        train_cfg=train_cfg,
+        log_root=None,
+        save_cfg=False,
+    )
     policy = ppo_runner.get_inference_policy(device=env.device)
     print("[INFO] policy:", policy)
 
     # export policy as a jit module (used to run it from C++)
     if EXPORT_POLICY:
-        path = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, train_cfg.runner.load_run, 'exported')
+        path = _get_policy_export_path(train_cfg)
         export_policy_as_jit(ppo_runner.alg.actor_critic, path)
-        print('[INFO] Exported policy as jit script to: ', path)
+        export_policy_as_onnx(ppo_runner.alg.actor_critic, path, obs.shape[-1], opset_version=11)
+        print('[INFO] Exported policy as jit script and onnx to: ', path)
 
     logger = Logger(env.dt)
     robot_index = 0 # which robot is used for logging
@@ -135,10 +164,15 @@ def play(args, x_vel=1.0, y_vel=0.0, yaw_vel=0.0):
     img_idx = 0
     env.set_camera(camera_position, lookat_position)
 
-    # use random vel for each env
-    x_vel = 2 * x_vel * torch.rand(env.num_envs, device=env.device) - x_vel
-    y_vel = 2 * y_vel * torch.rand(env.num_envs, device=env.device) - y_vel
-    yaw_vel = 2 * yaw_vel * torch.rand(env.num_envs, device=env.device) - yaw_vel
+    # Use fixed commands by default so play reflects the requested behavior.
+    if RANDOM_COMMANDS:
+        x_vel = 2 * x_vel * torch.rand(env.num_envs, device=env.device) - x_vel
+        y_vel = 2 * y_vel * torch.rand(env.num_envs, device=env.device) - y_vel
+        yaw_vel = 2 * yaw_vel * torch.rand(env.num_envs, device=env.device) - yaw_vel
+    else:
+        x_vel = torch.ones(env.num_envs, device=env.device) * x_vel
+        y_vel = torch.ones(env.num_envs, device=env.device) * y_vel
+        yaw_vel = torch.ones(env.num_envs, device=env.device) * yaw_vel
 
     for i in range(10 * int(env.max_episode_length)):
     
@@ -147,6 +181,19 @@ def play(args, x_vel=1.0, y_vel=0.0, yaw_vel=0.0):
         env.commands[:, 1] = y_vel
         env.commands[:, 2] = yaw_vel
         obs, _, rews, dones, infos, * _ = env.step(actions.detach())
+        base_height = _get_base_height(env, robot_index)
+        base_z = env.root_states[robot_index, 2].item()
+        base_pitch = _get_base_pitch(env, robot_index)
+
+        if PRINT_BASE_STATE and i % BASE_STATE_PRINT_INTERVAL == 0:
+            print(
+                f"[play] step={i:05d} "
+                f"base_height={base_height:.3f}m "
+                f"base_z={base_z:.3f}m "
+                f"pitch={base_pitch:.3f}rad "
+                f"vx={env.base_lin_vel[robot_index, 0].item():.3f}m/s "
+                f"cmd_x={env.commands[robot_index, 0].item():.3f}m/s"
+            )
 
         if RECORD_FRAMES:
             if i % 2:
@@ -174,6 +221,10 @@ def play(args, x_vel=1.0, y_vel=0.0, yaw_vel=0.0):
                     'base_vel_y': env.base_lin_vel[robot_index, 1].item(),
                     'base_vel_z': env.base_lin_vel[robot_index, 2].item(),
                     'base_vel_yaw': env.base_ang_vel[robot_index, 2].item(),
+                    'base_height': base_height,
+                    'base_z': base_z,
+                    'base_pitch': base_pitch,
+                    'projected_gravity_x': env.projected_gravity[robot_index, 0].item(),
                     'contact_forces_z': env.contact_forces[robot_index, env.feet_indices, 2].cpu().numpy()
                 }
             )
@@ -200,7 +251,10 @@ if __name__ == '__main__':
     EXPORT_POLICY = True
     RECORD_FRAMES = False
     MOVE_CAMERA = True
+    RANDOM_COMMANDS = True
+    # RANDOM_COMMANDS = False
     args = get_args([
         dict(name="--load_cfg", action="store_true", default=False, help="use the config from the logdir"),
     ])
-    play(args, x_vel=2.0, y_vel=0.0, yaw_vel=1.0)   # if use randomly vel, check line 124-126 and 131-133
+    play(args)
+    # play(args, x_vel=2.0, y_vel=0.0, yaw_vel=0.0)

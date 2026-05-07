@@ -269,7 +269,6 @@ class Cc1JumpwtwCfg( LeggedRobotCfg ):
             # has_contact = 10.0  # (base 原地不动) 时的 四足触地个数 奖励
             # feet_stumble = -0.0  # 四足接触到垂直表面 惩罚
             feet_slide = -0.05  # 脚接触地面具有相对base的速度 惩罚
-            feet_soft_landing = -1.0  # 首次触地过重惩罚：降低落脚声和砸地感
             # feet_clearance_base = -2.0  # 大速度下 四足距base目标距离 惩罚
             # feet_clearance_terrain = -0.0  # 大速度下 四足离地目标高度 惩罚
             # feet_yaw_clearance_terrain = 5.0  # (base原地旋转) 时 脚抬起
@@ -299,21 +298,12 @@ class Cc1JumpwtwCfg( LeggedRobotCfg ):
         feet_height_target_base = -0.25  # 足部距base的 相对距离目标（抬脚高度为0.15 以适应台阶地形）
         feet_height_target_terrain = 0.15  # 足部离地高度目标
         max_contact_force = 100.    # 四足接触力 > 100N 时触发惩罚的阈值
-        soft_landing_contact_threshold = 1.0
-        soft_landing_max_z_vel = 0.25
-        soft_landing_max_force = 70.0
-        soft_landing_force_weight = 0.25
         target_foot_height = 0.1  # feet height
         target_foot_height_yaw = 0.1  # feet height
         kappa_gait_probs = 0.07
         gait_force_sigma = 100.
         gait_vel_sigma = 10.
         cycle_time = 0.333
-
-        tracking_relief_enabled = True
-        tracking_relief_tilt_start = 0.30
-        tracking_relief_tilt_end = 0.60
-        tracking_relief_min_scale = 0.25
 
     class normalization:
         class obs_scales:
