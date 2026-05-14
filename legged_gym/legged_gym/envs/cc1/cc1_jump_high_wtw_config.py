@@ -51,6 +51,18 @@ class Cc1JumpHighwtw(LeggedRobotwtw):
             contact_weight = torch.ones(self.num_envs, device=self.device)
         return vel_reward * push.float() * contact_weight * self._jump_motion_mask().float()
 
+    def _reward_jump_ref_forward_vel(self):
+        """Reward forward speed during push/flight without penalizing useful overshoot."""
+        _, _, push, flight_up, flight_down, _, _, _ = self._jump_phase_masks()
+        active = push | flight_up | flight_down
+
+        start_vel = getattr(self.cfg.rewards, "jump_ref_forward_vel_min", 0.4)
+        target_cap = getattr(self.cfg.rewards, "jump_ref_forward_vel_target", 1.8)
+        target_vel = torch.clamp(self.commands[:, 0], min=start_vel, max=target_cap)
+        vel_span = torch.clamp(target_vel - start_vel, min=1e-6)
+        vel_reward = torch.clamp((self.base_lin_vel[:, 0] - start_vel) / vel_span, min=0.0, max=1.0)
+        return vel_reward * active.float() * self._jump_motion_mask().float() * self._tracking_relief_scale()
+
     def _get_jump_dof_reference(self):
         _, compress, push, flight_up, flight_down, landing, recovery, _ = self._jump_phase_masks()
         if self.default_dof_pos.shape[0] == self.num_envs:
@@ -261,52 +273,41 @@ class Cc1JumpHighwtw(LeggedRobotwtw):
 
 class Cc1JumpHighwtwCfg(Cc1JumpwtwCfg):
     """Stage-B pronk-like jump task: synchronized four-leg hopping with stable landing."""
-
+    
     class commands(Cc1JumpwtwCfg.commands):
         # Keep the first pronk stage narrow: forward synchronized hopping before lateral/yaw agility.
-        max_forward_curriculum = 2.0
-        max_backward_curriculum = 0.0
-        max_lat_curriculum = 0.0
-        stand_still_command = False
-        Rotate_command = False
+        max_forward_curriculum = 2.4
+        max_backward_curriculum = 1.5
+        max_lat_curriculum = 1.0
+        stand_still_command = True
+        Rotate_command = True
 
-        # Stay close to cc1_jump_wtw: the old synchronized gait was already stable.
-        frequencies = 3.0
+        # Stay synchronized like cc1_jump_wtw, but use a slightly quicker cycle for faster forward hopping.
+        frequencies = 3.2
         phases = 0.0
         offsets = 0.0
         bounds = 0.0
-        durations = 0.5
+        durations = 0.48
 
         class ranges(Cc1JumpwtwCfg.commands.ranges):
-            lin_vel_x = [0.5, 1.4]
-            lin_vel_y = [0.0, 0.0]
-            ang_vel_yaw = [0.0, 0.0]
-
-    class domain_rand(Cc1JumpwtwCfg.domain_rand):
-        randomize_payload_mass = True
-        payload_mass_range = [0.0, 2.0]
-
-        randomize_com_displacement = True
-        com_displacement_range = dict(
-            x=[-0.07, 0.07],
-            y=[-0.07, 0.07],
-            z=[-0.07, 0.07],
-        )
+            lin_vel_x = [-1.0, 1.0]
+            lin_vel_y = [-1.0, 1.0]
+            ang_vel_yaw = [-1.5, 1.5]
 
     class rewards(Cc1JumpwtwCfg.rewards):
         class scales(Cc1JumpwtwCfg.rewards.scales):
             termination = -2.0
-            tracking_lin_vel = 3.5
+            tracking_lin_vel = 4.0
             tracking_ang_vel = 0.5
 
             # Keep the original jump style stable, but loosen vertical penalties enough to jump higher.
-            lin_vel_z = -0.05
-            ang_vel_xy = -0.10
-            orientation = -3.0
-            base_height = -6.0
+            lin_vel_z = -0.02
+            ang_vel_xy = -0.15
+            orientation = -3.5
+            base_height = -4.0
 
             torques = -5e-5
-            action_rate = -0.01
+            action_rate = -0.008
             smoothness = -0.005
             dof_acc = -2.5e-7
             stand_still = 0.0
@@ -322,30 +323,31 @@ class Cc1JumpHighwtwCfg(Cc1JumpwtwCfg):
             raibert_heuristic = -5.0
             tracking_contacts_shaped_force = 1.0
             tracking_contacts_shaped_vel = 1.0
-            feet_clearance_cmd_linear = -15.0
+            feet_clearance_cmd_linear = -10.0
 
-            jump = 3.0
+            jump = 3.5
             jump_air_time = 0.0
-            jump_flight_phase_air = 0.0
-            jump_mixed_contact = -5.0
-            jump_height = 3.0
-            jump_z_vel = 0.0
-            jump_takeoff_z_vel = 2.5
-            jump_ref_base_height = 0.0
-            jump_ref_z_vel = 0.0
-            jump_ref_foot_height = 0.0
-            jump_ref_contact = 0.0
-            jump_ref_dof_pos = 0.0
-            jump_ref_foot_pos = 0.25
+            jump_flight_phase_air = 0.8
+            jump_mixed_contact = -7.0
+            jump_height = 5.0
+            jump_z_vel = 1.0
+            jump_takeoff_z_vel = 3.0
+            jump_ref_base_height = 0.45
+            jump_ref_z_vel = 0.30
+            jump_ref_forward_vel = 1.2
+            jump_ref_foot_height = 0.20
+            jump_ref_contact = 0.35
+            jump_ref_dof_pos = 0.12
+            jump_ref_foot_pos = 0.35
             jump_landing_force_balance = 0.0
             jump_hipx_landing = 0.0
-            jump_leg_symmetry = -2.0
+            jump_leg_symmetry = -3.0
 
         only_positive_rewards = True
         base_height_target = 0.43
-        base_height_target_vel = 0.8
-        target_foot_height = 0.10
-        target_foot_height_yaw = 0.10
+        base_height_target_vel = 0.95
+        target_foot_height = 0.12
+        target_foot_height_yaw = 0.12
 
         soft_landing_contact_threshold = 1.0
         soft_landing_max_z_vel = 0.35
@@ -358,63 +360,65 @@ class Cc1JumpHighwtwCfg(Cc1JumpwtwCfg):
         jump_sync_air_only = False
 
         jump_height_min = 0.43
-        jump_height_target = 0.58
+        jump_height_target = 0.64
         jump_z_vel_min = 0.2
-        jump_z_vel_target = 1.0
-        jump_takeoff_z_vel_min = 0.10
-        jump_takeoff_z_vel_target = 1.25
+        jump_z_vel_target = 1.25
+        jump_takeoff_z_vel_min = 0.15
+        jump_takeoff_z_vel_target = 1.45
         jump_takeoff_require_contact = True
+        jump_ref_forward_vel_min = 0.5
+        jump_ref_forward_vel_target = 1.8
 
-        jump_phase_compress_end = 0.15
-        jump_phase_push_end = 0.35
-        jump_phase_flight_end = 0.70
-        jump_phase_land_end = 0.85
+        jump_phase_compress_end = 0.14
+        jump_phase_push_end = 0.34
+        jump_phase_flight_end = 0.74
+        jump_phase_land_end = 0.88
 
-        jump_ref_height_stance = 0.43
-        jump_ref_height_compress = 0.37
-        jump_ref_height_takeoff = 0.50
-        jump_ref_height_apex = 0.58
-        jump_ref_height_land = 0.43
+        jump_ref_height_stance = 0.36
+        jump_ref_height_compress = 0.32
+        jump_ref_height_takeoff = 0.52
+        jump_ref_height_apex = 0.62
+        jump_ref_height_land = 0.36
 
         jump_ref_z_vel_compress = -0.25
-        jump_ref_z_vel_push = 1.0
+        jump_ref_z_vel_push = 1.35
         jump_ref_z_vel_flight = 0.0
-        jump_ref_z_vel_flight_up = 0.0
-        jump_ref_z_vel_flight_down = 0.0
-        jump_ref_z_vel_land = -0.25
+        jump_ref_z_vel_flight_up = 0.35
+        jump_ref_z_vel_flight_down = -0.35
+        jump_ref_z_vel_land = -0.30
 
         jump_ref_foot_height_stance = 0.02
-        jump_ref_foot_height_flight = 0.10
+        jump_ref_foot_height_flight = 0.12
         jump_ref_foot_x_front = 0.185
         jump_ref_foot_x_rear = -0.185
         jump_ref_foot_y_left = 0.16
         jump_ref_foot_y_right = -0.16
         jump_ref_foot_z_stance = -0.40
-        jump_ref_foot_z_flight = -0.40
+        jump_ref_foot_z_flight = -0.39
         jump_ref_foot_z_land = -0.40
-        jump_ref_foot_x_sweep_back = -0.035
-        jump_ref_foot_x_sweep_forward = 0.035
-        jump_ref_foot_x_land_offset = 0.010
-        jump_ref_foot_pos_weight_x = 0.35
+        jump_ref_foot_x_sweep_back = -0.055
+        jump_ref_foot_x_sweep_forward = 0.055
+        jump_ref_foot_x_land_offset = 0.020
+        jump_ref_foot_pos_weight_x = 0.45
         jump_ref_foot_pos_weight_y = 1.0
-        jump_ref_foot_pos_weight_z = 0.0
+        jump_ref_foot_pos_weight_z = 0.10
 
-        jump_ref_hip_y_compress = -0.8
-        jump_ref_knee_compress = 1.6
-        jump_ref_hip_y_push = -0.8
-        jump_ref_knee_push = 1.6
-        jump_ref_hip_y_flight = -0.8
-        jump_ref_knee_flight = 1.6
-        jump_ref_hip_y_land = -0.8
-        jump_ref_knee_land = 1.6
+        jump_ref_hip_y_compress = -0.95
+        jump_ref_knee_compress = 1.85
+        jump_ref_hip_y_push = -0.60
+        jump_ref_knee_push = 1.15
+        jump_ref_hip_y_flight = -0.72
+        jump_ref_knee_flight = 1.40
+        jump_ref_hip_y_land = -0.90
+        jump_ref_knee_land = 1.75
         jump_ref_hip_y_recovery = -0.8
         jump_ref_knee_recovery = 1.6
 
-        jump_ref_sigma_height = 0.05
-        jump_ref_sigma_z_vel = 0.6
-        jump_ref_sigma_foot = 0.05
-        jump_ref_sigma_foot_pos = 0.015
-        jump_ref_sigma_dof = 0.70
+        jump_ref_sigma_height = 0.06
+        jump_ref_sigma_z_vel = 0.75
+        jump_ref_sigma_foot = 0.06
+        jump_ref_sigma_foot_pos = 0.025
+        jump_ref_sigma_dof = 0.80
         jump_landing_balance_force_norm = 120.0
         jump_hipx_landing_ids = [0, 3, 6, 9]
 
@@ -422,7 +426,6 @@ class Cc1JumpHighwtwCfg(Cc1JumpwtwCfg):
         tracking_relief_tilt_start = 0.25
         tracking_relief_tilt_end = 0.55
         tracking_relief_min_scale = 0.15
-
 
 class Cc1JumpHighwtwCfgPPO(Cc1JumpwtwCfgPPO):
     class algorithm(Cc1JumpwtwCfgPPO.algorithm):

@@ -396,6 +396,7 @@ class LeggedRobotwtw(BaseTask):
 
         # 4. 为重置的 env 重新采样 commands
         self._resample_commands(env_ids)
+        self.sudden_stop_time_left[env_ids] = 0.
 
         # 6. 重置各种缓冲区
         self.last_actions[env_ids] = 0.
@@ -722,6 +723,8 @@ class LeggedRobotwtw(BaseTask):
             # 命令的角速度 = 0.5 * (目标航向 - 当前航向)[-pi, pi] ==> 裁剪到[-2, 2]
             self.commands[:, 2] = torch.clip(0.5 * wrap_to_pi(self.commands[:, 3] - heading), -2., 2.)
 
+        self._apply_sudden_stop_commands()
+
         # 3. 计算采样点的高度
         if self.cfg.terrain.measure_heights:
             self.measured_heights = self._get_heights()
@@ -764,7 +767,12 @@ class LeggedRobotwtw(BaseTask):
     def _resample_commands(self, env_ids):
         """ Randomly select commands of some environments """
 
-        self.commands[env_ids, 0] = torch_rand_float(-1.0, 1.0, (len(env_ids), 1), device=self.device).squeeze(1)
+        self.commands[env_ids, 0] = torch_rand_float(
+            self.command_ranges["lin_vel_x"][0],
+            self.command_ranges["lin_vel_x"][1],
+            (len(env_ids), 1),
+            device=self.device,
+        ).squeeze(1)
 
         self.commands[env_ids, 1] = torch_rand_float(self.command_ranges["lin_vel_y"][0],self.command_ranges["lin_vel_y"][1],(len(env_ids), 1),device=self.device,).squeeze(1)
 
@@ -796,6 +804,36 @@ class LeggedRobotwtw(BaseTask):
         # set small commands to zero
         self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
         
+    def _apply_sudden_stop_commands(self):
+        if not getattr(self.cfg.commands, "sudden_stop_command", False):
+            return
+
+        active_stop = self.sudden_stop_time_left > 0.0
+        active_stop_f = active_stop.to(dtype=self.commands.dtype)
+        self.commands[:, 0:3] *= (1.0 - active_stop_f).unsqueeze(1)
+        self.sudden_stop_time_left.sub_(self.dt * active_stop_f).clamp_(min=0.0)
+
+        interval_s = getattr(self.cfg.commands, "sudden_stop_interval_s", 2.0)
+        interval_steps = max(int(interval_s / self.dt), 1)
+        if self.common_step_counter % interval_steps != 0:
+            return
+
+        min_speed = getattr(self.cfg.commands, "sudden_stop_min_speed", 0.25)
+        min_yaw = getattr(self.cfg.commands, "sudden_stop_min_yaw_speed", 0.25)
+        min_episode_time_s = getattr(self.cfg.commands, "sudden_stop_min_episode_time_s", 1.0)
+        min_episode_steps = max(int(min_episode_time_s / self.dt), 1)
+        moving = (torch.norm(self.commands[:, :2], dim=1) > min_speed) | (torch.abs(self.commands[:, 2]) > min_yaw)
+        eligible = moving & (~active_stop) & (self.episode_length_buf > min_episode_steps)
+
+        ratio_range = getattr(self.cfg.commands, "sudden_stop_env_ratio_range", [0.02, 0.08])
+        stop_prob = torch_rand_float(ratio_range[0], ratio_range[1], (1, 1), device=self.device).squeeze()
+        selected = eligible & (torch.rand(self.num_envs, device=self.device) < stop_prob)
+
+        duration_range = getattr(self.cfg.commands, "sudden_stop_duration_s", [0.4, 1.0])
+        durations = torch_rand_float(duration_range[0], duration_range[1], (self.num_envs, 1), device=self.device).squeeze(1)
+        self.sudden_stop_time_left = torch.where(selected, durations, self.sudden_stop_time_left)
+        self.commands[:, 0:3] *= (1.0 - selected.to(dtype=self.commands.dtype)).unsqueeze(1)
+
     
     def _step_contact_targets(self):
         """根据步态相关 command 更新期望触地状态/时钟输入。
@@ -1221,6 +1259,7 @@ class LeggedRobotwtw(BaseTask):
 
         self.commands = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=torch.float, device=self.device, requires_grad=False) # x vel, y vel, yaw vel, heading
         self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel], device=self.device, requires_grad=False,) # TODO change this
+        self.sudden_stop_time_left = torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
         
         self.feet_air_time = torch.zeros(self.num_envs, self.feet_indices.shape[0], dtype=torch.float, device=self.device, requires_grad=False)
         self.prev_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
@@ -1966,6 +2005,42 @@ class LeggedRobotwtw(BaseTask):
     def _reward_orientation(self):
         # 惩罚 base 非水平姿态
         return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
+    def _reward_backward_orientation(self):
+        # 后退时额外抑制身体俯仰/横滚，避免高站姿下向后仰倒。
+        min_speed = getattr(self.cfg.rewards, "backward_orientation_min_speed", 0.05)
+        full_speed = getattr(self.cfg.rewards, "backward_orientation_full_speed", 0.35)
+        backward_weight = torch.clamp(
+            (-self.commands[:, 0] - min_speed) / max(full_speed - min_speed, 1e-6),
+            min=0.0,
+            max=1.0,
+        )
+        return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1) * backward_weight
+    def _zero_command_weight(self):
+        lin_threshold = getattr(self.cfg.rewards, "zero_command_lin_vel_threshold", 0.25)
+        yaw_threshold = getattr(self.cfg.rewards, "zero_command_yaw_vel_threshold", 0.20)
+        lin_weight = torch.clamp(
+            (lin_threshold - torch.norm(self.commands[:, :2], dim=1)) / max(lin_threshold, 1e-6),
+            min=0.0,
+            max=1.0,
+        )
+        yaw_weight = torch.clamp(
+            (yaw_threshold - torch.abs(self.commands[:, 2])) / max(yaw_threshold, 1e-6),
+            min=0.0,
+            max=1.0,
+        )
+        return lin_weight * yaw_weight
+    def _reward_stop_orientation(self):
+        # 零速/急停时额外压住身体点头和侧倾，减少从站立切入RL或刹停时的前倾。
+        pitch_weight = getattr(self.cfg.rewards, "stop_pitch_weight", 2.0)
+        roll_weight = getattr(self.cfg.rewards, "stop_roll_weight", 1.0)
+        tilt_error = (
+            pitch_weight * torch.square(self.projected_gravity[:, 0])
+            + roll_weight * torch.square(self.projected_gravity[:, 1])
+        )
+        return tilt_error * self._zero_command_weight()
+    def _reward_stop_ang_vel_xy(self):
+        # 零速/急停时抑制 base roll/pitch 角速度，避免停下瞬间身体继续往前点。
+        return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1) * self._zero_command_weight()
     def _reward_orientation_up(self):
         return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1) * torch.clamp(-self.projected_gravity[:, 2], 0, 1)
 
@@ -2482,6 +2557,14 @@ class LeggedRobotwtw(BaseTask):
         for i in range(4):
             reward += desired_contact[:, i] * torch.exp(-1 * foot_velocities[:, i] ** 2 / self.cfg.rewards.gait_vel_sigma)
         return reward / 4 * self._tracking_relief_scale()
+
+    def _reward_anti_trot_diagonal_swing(self):
+        contact_threshold = getattr(self.cfg.rewards, "anti_trot_contact_threshold", 1.0)
+        contact = self.contact_forces[:, self.feet_indices, 2] > contact_threshold
+        swing = (~contact).float()
+        diagonal_swing = swing[:, 0] * swing[:, 3] + swing[:, 1] * swing[:, 2]
+        moving = ((torch.norm(self.commands[:, :2], dim=1) > 0.2) | (torch.abs(self.commands[:, 2]) > 0.1)).float()
+        return diagonal_swing * moving * self._tracking_relief_scale()
 
     def _reward_feet_clearance_cmd_linear(self):
         # requires: foot phase (self.foot_indices), desired_contact_states, and swing height command at index 9

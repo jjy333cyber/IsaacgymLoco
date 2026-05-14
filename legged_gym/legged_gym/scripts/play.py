@@ -116,6 +116,8 @@ def play(args, x_vel=1.0, y_vel=0.0, yaw_vel=0.0):
     env_cfg.domain_rand.push_robots = False
     env_cfg.domain_rand.disturbance = False
     env_cfg.domain_rand.randomize_payload_mass = False
+    if hasattr(env_cfg.commands, "sudden_stop_command"):
+        env_cfg.commands.sudden_stop_command = False
     # env_cfg.commands.heading_command = False
     # env_cfg.terrain.mesh_type = 'plane'
     env_cfg.asset.terminate_after_contacts_on = []
