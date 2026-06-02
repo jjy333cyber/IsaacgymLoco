@@ -61,30 +61,40 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
             # 'FR_HipY_joint': -0.8,
             # 'HR_HipY_joint': -0.8,
 
-            # 'FL_HipY_joint': -0.4,
-            # 'HL_HipY_joint': -0.4,
-            # 'FR_HipY_joint': -0.4,
-            # 'HR_HipY_joint': -0.4,
-
-            'FL_HipY_joint': -0.5,
-            'HL_HipY_joint': -0.5,
-            'FR_HipY_joint': -0.5,
-            'HR_HipY_joint': -0.5,
-
             # 'FL_Knee_joint': 1.6,
             # 'HL_Knee_joint': 1.6,
             # 'FR_Knee_joint': 1.6,
             # 'HR_Knee_joint': 1.6,
+
+            # 'FL_HipY_joint': -0.4,
+            # 'HL_HipY_joint': -0.4,
+            # 'FR_HipY_joint': -0.4,
+            # 'HR_HipY_joint': -0.4,
 
             # 'FL_Knee_joint': 0.8,
             # 'HL_Knee_joint': 0.8,
             # 'FR_Knee_joint': 0.8,
             # 'HR_Knee_joint': 0.8,
 
-            'FL_Knee_joint': 1.0,
-            'HL_Knee_joint': 1.0,
-            'FR_Knee_joint': 1.0,
-            'HR_Knee_joint': 1.0,
+            'FL_HipY_joint': -0.48,
+            'HL_HipY_joint': -0.48,
+            'FR_HipY_joint': -0.48,
+            'HR_HipY_joint': -0.48,
+
+            'FL_Knee_joint': 0.96,
+            'HL_Knee_joint': 0.96,
+            'FR_Knee_joint': 0.96,
+            'HR_Knee_joint': 0.96,
+
+            # 'FL_HipY_joint': -0.5,
+            # 'HL_HipY_joint': -0.5,
+            # 'FR_HipY_joint': -0.5,
+            # 'HR_HipY_joint': -0.5,
+
+            # 'FL_Knee_joint': 1.0,
+            # 'HL_Knee_joint': 1.0,
+            # 'FR_Knee_joint': 1.0,
+            # 'HR_Knee_joint': 1.0,
         }
 
     class terrain( LeggedRobotCfg.terrain ):
@@ -143,6 +153,7 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
         sudden_stop_min_yaw_speed = 0.25
         sudden_stop_min_episode_time_s = 1.0
 
+        # trot
         # frequencies = 2.5
         # phases = 0.5
         # offsets = 0
@@ -161,16 +172,37 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
         # bounds = 0.0
         # durations = 0.68
 
-        frequencies = 1.3
+        # walk
+        # frequencies = 1.3
+        # phases = 0.5
+        # offsets = 0.35
+        # bounds = 0.0
+        # durations = 0.65
+
+        # pace
+        # Pace-like lateral gait: LF+LH swing together, RF+RH swing together.
+        # frequencies = 1.0
+        # phases = 0.5
+        # offsets = 0.5
+        # bounds = 0.0
+        # durations = 0.6
+
+        # frequencies = 1.8
+        # phases = 0.5
+        # offsets = 0.5
+        # bounds = 0.0
+        # durations = 0.6
+
+        frequencies = 1.8
         phases = 0.5
-        offsets = 0.65
+        offsets = 0.5
         bounds = 0.0
-        durations = 0.55
+        durations = 0.6
 
         class ranges( LeggedRobotCfg.commands.ranges ):
-            lin_vel_x = [-0.6, 0.6]  # min max [m/s]
-            lin_vel_y = [-0.4, 0.4]  # min max [m/s]
-            ang_vel_yaw = [-0.6, 0.6]  # min max [rad/s]
+            lin_vel_x = [-1.0, 1.0]  # min max [m/s]
+            lin_vel_y = [-0.8, 0.8]  # min max [m/s]
+            ang_vel_yaw = [-1.2, 1.2]  # min max [rad/s]
             heading = [-math.pi, math.pi]
 
     class asset( LeggedRobotCfg.asset ):
@@ -207,7 +239,7 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
 
     class domain_rand:
         # startup
-        randomize_payload_mass = True  # 是否随机增加 base 的质量，模拟头部/载荷更重
+        randomize_payload_mass = True  # 是否随机增加 base 的质量
         payload_mass_range = [-1.5, 4.0]
         # payload_mass_range = [13.0, 17.0]
 
@@ -291,13 +323,19 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
             # velocity-tracking
             tracking_lin_vel = 3.0  # commands 中XY方向的 线速度跟踪 奖励 (>= 0.1m/s时)
             tracking_ang_vel = 3.0  # commands 中yaw方向的 角速度跟踪 奖励
-            
+
+            # 新加
+            straight_lin_vel_y = -1.0  # 前进直行命令时抑制横向漂移
+            straight_yaw_vel = -0.8  # 前进直行命令时抑制偏航漂移
+            forward_pitch = -6.0  # 前进直行时额外惩罚鼻子向下前倾，避免重心冲到前脚外导致前翻
+
             # root
             lin_vel_z = -2.0  # base 的 Z 轴线速度 惩罚：防止机身跳跃
             ang_vel_xy = -0.10  # -0.05  # base 的 XY 轴角速度 惩罚：抑制机身翻滚（roll, pitch）
             orientation = -5.0  # -2.0  # base 非水平姿态 惩罚（地面不平时，可减小）
             backward_orientation = -2.0  # 后退时额外抑制身体后仰/侧翻
-            base_height = -15.0  # -10.0  # base 目标高度 惩罚
+            base_height = -20.0  # -20.0  # base 目标高度 惩罚
+            moving_base_height = -12.0  # -20.0  # 运动/转向时额外防止机身下沉，只惩罚低于目标高度
 
             # 新加
             stop_orientation = -5.0  # 零速/急停时额外压住身体前倾和侧倾
@@ -309,7 +347,7 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
             # dof_vel = -0.0  # 关节速度过大 惩罚
             dof_acc = -2.5e-7  # 关节加速度 惩罚（若步态抖动，可增大惩罚）
             stand_still = -0.5  # -0.5  # (base原地不动 或 原地旋转) 时的 关节位置与默认关节位置的 偏差 惩罚
-            # hip_pos = -0.4  # hip关节位置与默认位置的 偏差 惩罚，(原地不动 或 原地旋转) 时惩罚系数为 5.0，其他为 1.0
+            hip_pos = -0.4  # -0.4  # hip关节位置与默认位置的 偏差 惩罚，(原地不动 或 原地旋转) 时惩罚系数为 5.0，其他为 1.0
             # thigh_pose = -0.01
             # calf_pose = -0.02
             # dof_pos_limits = -0.0  # 关节位置接近极限 惩罚
@@ -343,13 +381,20 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
             raibert_heuristic = -10.0  # Raibert启发式奖励：根据当前base速度和步态周期计算理想的足部位置，奖励与理想位置的接近程度。鼓励足部在适当位置着地以稳定运动。
             # tracking_contacts_shaped_force = 1.0
             # tracking_contacts_shaped_vel = 1.0
-            tracking_contacts_shaped_force_exp = 2.0  # 1.0
-            tracking_contacts_shaped_vel_exp = 2.0  # 1.0
+            tracking_contacts_shaped_force_exp = 1.0  # 1.0
+            tracking_contacts_shaped_vel_exp = 1.0  # 1.0
+            feet_clearance_cmd_linear = -30.0  # 根据命令的线速度奖励足部离地高度，鼓励高速时抬脚更高以适应复杂地形
             
-            # 新加
+            # 新加步态相关奖励
             anti_trot_diagonal_swing = -0.8  # 移动时惩罚对角腿同时摆动，避免策略退回trot
+            lateral_pair_contact_sync = 0.4  # 奖励同侧前后腿真实接触状态同步，并且一起匹配期望支撑/摆动相
+            lateral_pair_touchdown_sync = 1.2  # 奖励 LF+LH / RF+RH 同帧落地，强化 pace 的同侧成组落脚
+            lateral_pair_takeoff_sync = 0.8  # 奖励 LF+LH / RF+RH 同帧离地，减少前后腿一只先抬一只后抬
+            lateral_pair_extra_touchdown = -0.4  # 惩罚同一gait周期内同侧腿二次落地，减少前进迈步时提前蹭地/反复点地
+            lateral_pair_contact_hold = -0.1  # 支撑相中同侧前后腿应保持接触，避免一步内触地2-3次
+            short_contact = -1.0  # 前进/后退时惩罚四条腿刚落地就立刻抬起，压掉一步内二次触地
+            swing_contact = -2.0  # 四条腿明确摆动期提前触地惩罚，压掉摆腿末端蹭地/探地
 
-            feet_clearance_cmd_linear = -30.0
 
         reward_curriculum = False
         reward_curriculum_term = ["feet_edge"]
@@ -360,11 +405,22 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
         soft_dof_pos_limit = 0.95   # 关节位置软限位：关节角度超过URDF限位95%时触发惩罚。调低（如0.9）可提前约束
         soft_dof_vel_limit = 0.95   # 关节速度软限位：超过最大速度95%时惩罚。保护电机模型不过载
         soft_torque_limit = 0.95    # 关节力矩软限位：超过额定扭矩95%时惩罚。防止仿真数值发散
-        base_height_target = 0.42  # 0.37  # 机身目标高度
+        base_height_target = 0.42   # 机身目标高度
+        moving_base_height_target = 0.45  # 0.45  # 运动时目标高度略高于站立，抵消走路下沉几厘米的问题
+        moving_height_min_lin_cmd = 0.05
+        moving_height_full_lin_cmd = 0.35
+        moving_height_min_yaw_cmd = 0.05
+        moving_height_full_yaw_cmd = 0.40
         feet_height_target_base = -0.28  # 足部距base的 相对距离目标（抬脚高度为0.15 以适应台阶地形）
         feet_height_target_terrain = 0.10  # 足部离地高度目标
         max_contact_force = 100.    # 四足接触力 > 100N 时触发惩罚的阈值
         # max_contact_force = 180.
+        target_foot_height = 0.1  # feet height
+        target_foot_height_yaw = 0.08  # feet height
+        kappa_gait_probs = 0.07
+        gait_force_sigma = 100.
+        gait_vel_sigma = 10.
+        # cycle_time = 0.5
 
         # 后退时额外抑制身体后仰/侧翻：当命令的线速度为负（后退）且超过一定阈值时，增加对身体姿态的惩罚，鼓励保持更稳定的姿态以适应后退动作。可提高后退时的稳定性和安全性。
         backward_orientation_min_speed = 0.05
@@ -376,6 +432,14 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
         stop_pitch_weight = 2.0
         stop_roll_weight = 1.0
 
+        # 新加前进直行约束：只在 cmd_x 足够大、cmd_y/cmd_yaw 接近 0 时生效。
+        straight_min_forward_speed = 0.20
+        straight_full_forward_speed = 1.0
+        straight_cmd_y_threshold = 0.15
+        straight_cmd_yaw_threshold = 0.15
+        forward_pitch_deadband = 0.04  # 允许约2~3度轻微前倾，超过后才惩罚
+        forward_pitch_direction = 1.0  # 若实际日志里前倾时 projected_gravity[:,0] 为负，则改成 -1.0
+
         # 新加轻落地
         soft_landing_contact_threshold = 1.0
         soft_landing_max_z_vel = 0.25
@@ -383,13 +447,18 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
         # soft_landing_max_force = 120.0
         soft_landing_force_weight = 0.25
 
-        target_foot_height = 0.08  # feet height
-        target_foot_height_yaw = 0.08  # feet height
-        kappa_gait_probs = 0.07  # 0.07
-        gait_force_sigma = 100.
-        gait_vel_sigma = 10.
+        # 新加步态相关项
         anti_trot_contact_threshold = 1.0
-        # cycle_time = 0.5
+        lateral_pair_contact_threshold = 2.0
+        lateral_pair_touchdown_cooldown_s = 0.20  # 同侧腿第一次触地后0.20s内再次触地也算二次落地，抓跨周期提前点地
+        short_contact_min_time_s = 0.10  # 默认一次落地至少保持0.10s，否则认为是点地/弹脚
+        front_contact_min_time_s = 0.12  # 前腿更容易造成身体下压/前倾，接触保持时间略长
+        hind_contact_min_time_s = 0.12  # 后腿保留一定蹬地自由度，避免把推进能力压掉
+        front_short_contact_weight = 1.3
+        hind_short_contact_weight = 1.2
+        swing_contact_threshold = 0.3  # desired_contact 低于该值才算明确摆动相，避免误罚相位切换落地
+        lateral_pair_touchdown_phase_window = 0.10  # 同侧落地奖励只在每周期 stance 开始附近触发一次
+        lateral_pair_takeoff_phase_window = 0.08  # 同侧离地奖励只在每周期 stance 结束附近触发一次
 
     class normalization:
         class obs_scales:

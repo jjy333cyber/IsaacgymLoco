@@ -77,7 +77,7 @@ BASE_STATE_PRINT_INTERVAL = 50
 
 
 def _get_policy_export_path(train_cfg):
-    return os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'policies')
+    return os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, args.load_run, 'policies')
 
 
 def _get_base_height(env, robot_index):
@@ -127,9 +127,13 @@ def play(args, x_vel=1.0, y_vel=0.0, yaw_vel=0.0):
 
     # prepare environment
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
-    env.commands[:, 0] = x_vel
-    env.commands[:, 1] = y_vel
-    env.commands[:, 2] = yaw_vel
+    single_jump_flag_mode = getattr(env.cfg.commands, "single_jump_flag_mode", False)
+    if single_jump_flag_mode:
+        env.commands[:, 0:3] = 0.0
+    else:
+        env.commands[:, 0] = x_vel
+        env.commands[:, 1] = y_vel
+        env.commands[:, 2] = yaw_vel
 
     obs = env.get_observations()
     # load policy
@@ -179,9 +183,10 @@ def play(args, x_vel=1.0, y_vel=0.0, yaw_vel=0.0):
     for i in range(10 * int(env.max_episode_length)):
     
         actions = policy(obs.detach())
-        env.commands[:, 0] = x_vel
-        env.commands[:, 1] = y_vel
-        env.commands[:, 2] = yaw_vel
+        if not single_jump_flag_mode:
+            env.commands[:, 0] = x_vel
+            env.commands[:, 1] = y_vel
+            env.commands[:, 2] = yaw_vel
         obs, _, rews, dones, infos, * _ = env.step(actions.detach())
         base_height = _get_base_height(env, robot_index)
         base_z = env.root_states[robot_index, 2].item()
