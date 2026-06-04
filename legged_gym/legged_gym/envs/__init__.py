@@ -52,9 +52,11 @@ from .lite3.lite3_jump_config import Lite3JumpCfg, Lite3JumpCfgPPO
 
 from .cc1.cc1_config import Cc1RoughCfg, Cc1RoughCfgPPO
 from .cc1.cc1_wtw_config import Cc1RoughwtwCfg, Cc1RoughwtwCfgPPO
+from .cc1.cc1_wtw_amp_config import Cc1RoughwtwAmpCfg, Cc1RoughwtwAmpCfgPPO
 from .cc1.cc1_jump_config import Cc1JumpCfg, Cc1JumpCfgPPO 
 from .cc1.cc1_stairs_wtw_config import Cc1StairswtwCfg, Cc1StairswtwCfgPPO 
 from .cc1.cc1_jump_wtw_config import Cc1JumpwtwCfg, Cc1JumpwtwCfgPPO  
+from .cc1.cc1_jump_wtw_amp_config import Cc1JumpwtwAmpCfg, Cc1JumpwtwAmpCfgPPO
 from .cc1.cc1_jump1_wtw_config import Cc1Jump1wtwCfg, Cc1Jump1wtwCfgPPO
 from .cc1.cc1_jump1_config import Cc1Jump1Cfg, Cc1Jump1CfgPPO  
 from .cc1.cc1_stairs_config import Cc1StairsCfg, Cc1StairsCfgPPO
@@ -84,8 +86,10 @@ task_registry.register( "lite3_jump", LeggedRobot, Lite3JumpCfg(), Lite3JumpCfgP
 
 task_registry.register( "cc1", LeggedRobot, Cc1RoughCfg(), Cc1RoughCfgPPO() )
 task_registry.register( "cc1_wtw", LeggedRobotwtw, Cc1RoughwtwCfg(), Cc1RoughwtwCfgPPO() )
+task_registry.register( "cc1_wtw_amp", LeggedRobotwtw, Cc1RoughwtwAmpCfg(), Cc1RoughwtwAmpCfgPPO() )
 task_registry.register( "cc1_jump", LeggedRobot, Cc1JumpCfg(), Cc1JumpCfgPPO() )
 task_registry.register( "cc1_jump_wtw", LeggedRobotwtw, Cc1JumpwtwCfg(), Cc1JumpwtwCfgPPO() )
+task_registry.register( "cc1_jump_wtw_amp", LeggedRobotwtw, Cc1JumpwtwAmpCfg(), Cc1JumpwtwAmpCfgPPO() )
 task_registry.register( "cc1_jump1_wtw", LeggedRobotwtw, Cc1Jump1wtwCfg(), Cc1Jump1wtwCfgPPO() )
 task_registry.register( "cc1_jump1", LeggedRobot, Cc1Jump1Cfg(), Cc1Jump1CfgPPO() )
 task_registry.register( "cc1_stairs", LeggedRobot, Cc1StairsCfg(), Cc1StairsCfgPPO() )

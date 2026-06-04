@@ -2199,6 +2199,25 @@ class LeggedRobotwtw(BaseTask):
         pitch_excess = torch.clamp(forward_pitch - deadband, min=0.0)
         return torch.square(pitch_excess) * self._straight_command_weight()
 
+    def _reward_forward_backward_orientation(self):
+        # Combined forward-fall and backward-fall guard. This keeps the old
+        # forward_pitch/backward_orientation behavior in one reward term.
+        deadband = getattr(self.cfg.rewards, "forward_pitch_deadband", 0.04)
+        pitch_direction = getattr(self.cfg.rewards, "forward_pitch_direction", 1.0)
+        forward_pitch = self.projected_gravity[:, 0] * pitch_direction
+        forward_pitch_excess = torch.clamp(forward_pitch - deadband, min=0.0)
+        forward_error = torch.square(forward_pitch_excess) * self._straight_command_weight()
+
+        min_speed = getattr(self.cfg.rewards, "backward_orientation_min_speed", 0.05)
+        full_speed = getattr(self.cfg.rewards, "backward_orientation_full_speed", 0.35)
+        backward_weight = torch.clamp(
+            (-self.commands[:, 0] - min_speed) / max(full_speed - min_speed, 1e-6),
+            min=0.0,
+            max=1.0,
+        )
+        backward_error = torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1) * backward_weight
+        return forward_error + backward_error
+
     def _reward_feet_air_time(self):
         # 奖励 四足的空中时间接近0.5s (原地不动时除外)
         # 需过滤接触力信号，因为PhysX引擎在复杂地形上接触力检测不可靠

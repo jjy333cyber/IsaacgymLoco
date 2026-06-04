@@ -58,9 +58,10 @@ import legged_gym.utils.kinematics.urdf as pk
 import pybullet_data as pd
 
 from retarget_utils import *
-import retarget_config_a1 as config
+# import retarget_config_a1 as config
 # import retarget_config_aliengo as config
 # import retarget_config_lite3 as config
+import retarget_config_cc1 as config
 
 POS_SIZE = 3
 ROT_SIZE = 4

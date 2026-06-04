@@ -31,7 +31,9 @@
         --src_config datasets.retarget_config_a1 \
         --dst_config datasets.retarget_config_aliengo
 
-当 --out_motion 未指定时，默认输出到目标 config 的 OUTPUT_DIR（位于工作区 datasets 下）。
+当 --out_motion 未指定时，默认输出到新的转换目录：
+datasets/mocap_motions_<src_robot>_to_<dst_robot>/
+输出文件名为：<src_robot>_to_<dst_robot>_<src_motion_name>.txt。
 """
 
 from __future__ import annotations
@@ -97,13 +99,34 @@ def _iter_motion_files(src_motion: Path) -> List[Path]:
     return files
 
 
-def _default_out_dir(dst_cfg) -> Path:
-    """默认输出目录：优先使用目标 config 的 OUTPUT_DIR（通常在 datasets/ 下）。"""
-    out_dir = getattr(dst_cfg, "OUTPUT_DIR", None)
-    if out_dir is None:
-        # fallback：本脚本同级目录下创建子目录（也在 datasets/ 下）
-        return Path(__file__).resolve().parent / "mocap_motions_converted"
-    return Path(str(out_dir))
+def _robot_name_from_config(cfg) -> str:
+    """从 retarget_config_xxx 模块名推断机器人名，用于输出目录和文件名。"""
+    module_name = getattr(cfg, "__name__", "")
+    short_name = module_name.rsplit(".", 1)[-1]
+    prefix = "retarget_config_"
+    if short_name.startswith(prefix):
+        return short_name[len(prefix):]
+    return short_name or "unknown"
+
+
+def _safe_name(name: str) -> str:
+    safe = "".join(ch.lower() if ch.isalnum() else "_" for ch in name)
+    while "__" in safe:
+        safe = safe.replace("__", "_")
+    return safe.strip("_") or "unknown"
+
+
+def _default_out_dir(src_cfg, dst_cfg) -> Path:
+    """默认输出到独立转换目录，避免覆盖目标机器人的原始 retarget 数据。"""
+    src_name = _safe_name(_robot_name_from_config(src_cfg))
+    dst_name = _safe_name(_robot_name_from_config(dst_cfg))
+    return Path(__file__).resolve().parent / f"mocap_motions_{src_name}_to_{dst_name}"
+
+
+def _default_out_motion_path(out_dir: Path, src_file: Path, src_cfg, dst_cfg) -> Path:
+    src_name = _safe_name(_robot_name_from_config(src_cfg))
+    dst_name = _safe_name(_robot_name_from_config(dst_cfg))
+    return out_dir / f"{src_name}_to_{dst_name}_{src_file.stem}.txt"
 
 
 def _is_motion_json(obj: dict) -> bool:
@@ -397,7 +420,11 @@ def main() -> None:
         "--out_motion",
         type=str,
         default=None,
-        help="输出目标 motion 文件路径；若不填，默认输出到目标 config 的 OUTPUT_DIR 并沿用原文件名",
+        help=(
+            "输出目标 motion 文件路径；若不填，默认输出到 "
+            "datasets/mocap_motions_<src>_to_<dst>/ 并命名为 "
+            "<src>_to_<dst>_<原文件名>.txt"
+        ),
     )
     parser.add_argument("--motion_weight", type=float, default=None, help="覆盖输出 MotionWeight；默认沿用源 motion")
     parser.add_argument(
@@ -415,7 +442,7 @@ def main() -> None:
     if len(src_files) == 0:
         raise FileNotFoundError(f"目录下没有 .txt motion 文件：{src_motion}")
 
-    out_dir = _default_out_dir(dst_cfg)
+    out_dir = _default_out_dir(src_cfg, dst_cfg)
 
     # 连接 pybullet
     connection_mode = pybullet.GUI if args.visualize else pybullet.DIRECT
@@ -516,7 +543,7 @@ def main() -> None:
         if args.out_motion is not None:
             out_motion_path = Path(args.out_motion)
         else:
-            out_motion_path = out_dir / src_file.name
+            out_motion_path = _default_out_motion_path(out_dir, src_file, src_cfg, dst_cfg)
 
         # 先把每帧的 dst pose（31 维，不含速度）算出来
         M = int(src_frames.shape[0])
