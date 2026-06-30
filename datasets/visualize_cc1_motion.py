@@ -113,6 +113,11 @@ def main():
     parser.add_argument("--camera-distance", type=float, default=1.2)
     parser.add_argument("--camera-yaw", type=float, default=50.0)
     parser.add_argument("--camera-pitch", type=float, default=-25.0)
+    parser.add_argument(
+        "--follow-camera",
+        action="store_true",
+        help="Follow the robot while preserving mouse-controlled yaw, pitch, and zoom.",
+    )
     args = parser.parse_args()
 
     motion_files = iter_motion_files(args.motion_file)
@@ -143,6 +148,13 @@ def main():
 
     foot_marker_ids = [None] * 4
     base_text_id = None
+    initial_base_pos = p.getBasePositionAndOrientation(robot)[0]
+    p.resetDebugVisualizerCamera(
+        cameraDistance=args.camera_distance,
+        cameraYaw=args.camera_yaw,
+        cameraPitch=args.camera_pitch,
+        cameraTargetPosition=initial_base_pos,
+    )
 
     try:
         while True:
@@ -187,12 +199,14 @@ def main():
                     if base_text_id is not None:
                         text_kwargs["replaceItemUniqueId"] = base_text_id
                     base_text_id = p.addUserDebugText(**text_kwargs)
-                    p.resetDebugVisualizerCamera(
-                        cameraDistance=args.camera_distance,
-                        cameraYaw=args.camera_yaw,
-                        cameraPitch=args.camera_pitch,
-                        cameraTargetPosition=base_pos,
-                    )
+                    if args.follow_camera:
+                        camera = p.getDebugVisualizerCamera()
+                        p.resetDebugVisualizerCamera(
+                            cameraDistance=camera[10],
+                            cameraYaw=camera[8],
+                            cameraPitch=camera[9],
+                            cameraTargetPosition=base_pos,
+                        )
                     p.stepSimulation()
                     time.sleep(dt)
 

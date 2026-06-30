@@ -471,6 +471,20 @@ def main() -> None:
 
     src_root_offset = np.asarray(src_cfg.SIM_ROOT_OFFSET, dtype=np.float64)
     dst_root_offset = np.asarray(dst_cfg.SIM_ROOT_OFFSET, dtype=np.float64)
+    src_nominal_root_height = getattr(src_cfg, "NOMINAL_ROOT_HEIGHT", None)
+    dst_nominal_root_height = getattr(dst_cfg, "NOMINAL_ROOT_HEIGHT", None)
+    root_height_scale = float(getattr(dst_cfg, "ROOT_HEIGHT_SCALE", 1.0))
+    map_nominal_root_height = (
+        src_nominal_root_height is not None and dst_nominal_root_height is not None
+    )
+    if map_nominal_root_height:
+        src_nominal_root_height = float(src_nominal_root_height)
+        dst_nominal_root_height = float(dst_nominal_root_height)
+        print(
+            "[retarget] Root height mapping: "
+            f"{src_nominal_root_height:.3f} -> {dst_nominal_root_height:.3f} m, "
+            f"relative scale={root_height_scale:.3f}"
+        )
 
     # 参考 retarget_kp_motions.py：脚端目标用“髋位置 + (hip->toe delta) + toe_offset_world”，
     # 因此需要稳定地拿到每条腿的髋 link id，并把 config 中可能的 FR/FL/RR/RL 顺序重排到槽位顺序。
@@ -494,6 +508,12 @@ def main() -> None:
     src_bullet_from_canon = src_joint_perm[0] if src_joint_perm is not None else None
     dst_bullet_from_canon = dst_joint_perm[0] if dst_joint_perm is not None else None
     dst_canon_from_bullet = dst_joint_perm[1] if dst_joint_perm is not None else None
+
+    # 与 retarget_kp_motions.py 一致：每段 motion 的首帧从目标机器人的
+    # 默认屈膝姿态开始求解，避免 CC1 后腿从全零姿态进入反向 IK 分支。
+    dst_rest = np.asarray(dst_cfg.DEFAULT_JOINT_POSE, dtype=np.float64)
+    if dst_bullet_from_canon is not None and dst_rest.shape[0] == 12:
+        dst_rest = dst_rest[dst_bullet_from_canon]
 
     # 可视化时把两台机器人分开放置，避免重叠。
     # 注意：该偏移只用于显示；速度/输出 pose 都仍使用“未偏移”的世界坐标。
@@ -567,6 +587,13 @@ def main() -> None:
 
             # 映射到 dst（乘回 dst 的 init / offset）
             dst_root_pos = ref_root_pos + dst_root_offset
+            if map_nominal_root_height:
+                # 不复制两台机器人不同的绝对站高，只保留源动作相对其标称站高的
+                # 蹲起、腾空等变化，再叠加到目标机器人的标称站高。
+                src_height_delta = src_root_pos[2] - src_nominal_root_height
+                dst_root_pos[2] = (
+                    dst_nominal_root_height + src_height_delta * root_height_scale
+                )
             dst_root_rot = _quat_mul(ref_root_rot, dst_init)
             dst_root_rot = _quat_norm(dst_root_rot)
 
@@ -581,12 +608,21 @@ def main() -> None:
             # 参考 retarget_kp_motions.py：用 hip->toe 的相对向量作为目标（对平移不敏感）
             hip_toe_delta = [toe - hip for toe, hip in zip(toe_world_src, hip_world_src)]
 
-            # 在目标机器人上 IK
-            pybullet.resetBasePositionAndOrientation(
-                dst_robot,
-                (dst_root_pos + dst_vis_offset).tolist(),
-                dst_root_rot.tolist(),
-            )
+            # 每个文件的首帧先恢复默认姿态；后续帧沿用上一帧 IK 状态，
+            # 既保证正确屈膝方向，也保持动作连续。
+            if i == 0:
+                _set_robot_base_and_joints(
+                    dst_robot,
+                    dst_root_pos + dst_vis_offset,
+                    dst_root_rot,
+                    dst_rest,
+                )
+            else:
+                pybullet.resetBasePositionAndOrientation(
+                    dst_robot,
+                    (dst_root_pos + dst_vis_offset).tolist(),
+                    dst_root_rot.tolist(),
+                )
 
             # retarget_kp_motions.py 的做法：先从 root_rot 得到 heading_rot，再把 toe_offset_local 旋到世界系
             inv_dst_init = _quat_inv(dst_init)
@@ -607,11 +643,8 @@ def main() -> None:
 
             # IK 的 damping/restPose 也必须是 PyBullet movable joint 顺序
             dst_damping = np.asarray(dst_cfg.JOINT_DAMPING, dtype=np.float64)
-            dst_rest = np.asarray(dst_cfg.DEFAULT_JOINT_POSE, dtype=np.float64)
             if dst_bullet_from_canon is not None and dst_damping.shape[0] == 12:
                 dst_damping = dst_damping[dst_bullet_from_canon]
-            if dst_bullet_from_canon is not None and dst_rest.shape[0] == 12:
-                dst_rest = dst_rest[dst_bullet_from_canon]
 
             joint_dst = pybullet.calculateInverseKinematics2(
                 dst_robot,

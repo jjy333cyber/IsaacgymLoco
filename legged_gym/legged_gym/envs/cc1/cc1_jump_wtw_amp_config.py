@@ -34,9 +34,6 @@ from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobot
 
 MOTION_FILES = []
 MOTION_FILES.extend(glob.glob(str(MOTION_FILES_DIR / "mocap_motions_cc1_pronk/*.txt")))
-if len(MOTION_FILES) == 0:
-    # Temporary fallback so the task can run before a CC1 pronk dataset is prepared.
-    MOTION_FILES.extend(glob.glob(str(MOTION_FILES_DIR / "mocap_motions_aliengo/canter*.txt")))
 from legged_gym.envs.cc1.cc1_config import Cc1RoughCfg
 
 class Cc1JumpwtwAmpCfg( LeggedRobotCfg ):
@@ -44,7 +41,8 @@ class Cc1JumpwtwAmpCfg( LeggedRobotCfg ):
         num_envs = 4096  # 并行仿真的环境数量（需根据GPU显存调整）
         num_one_step_observations = 61  # 单步 观测向量 维度（原始传感器数据）
         num_observations = num_one_step_observations * 6    # 总 观测向量 维度（含6步历史）
-        num_one_step_privileged_obs = 61 + 3 + 3 + 187  # 单步 特权观测向量 维度，（+3维线速度 + 3维随机扰动力 + 地形扫描(187))
+        # num_one_step_privileged_obs = 61 + 3 + 3 + 187  # 单步 特权观测向量 维度，（+3维线速度 + 3维随机扰动力 + 地形扫描(187))
+        num_one_step_privileged_obs = 61 + 3 + 3
         num_privileged_obs = num_one_step_privileged_obs * 1    # 总 特权观测向量 维度，if not None a priviledge_obs_buf will be returned by step() (critic obs for assymetric training). None is returned otherwise
         num_actions = 12  # 动作空间维度（12个关节）
         env_spacing = 3.  # 环境之间的间距（单位：米），not used with heightfields/trimeshes
@@ -52,6 +50,8 @@ class Cc1JumpwtwAmpCfg( LeggedRobotCfg ):
         episode_length_s = 20  # 单次训练Episode的时长（秒），episode length in seconds
         observe_gait_commands = True  # 是否观察gait commands，observe gait commands in the observations
         using_amp = True  # AMP: return AMP states for HybridPolicyRunner
+        # 让判别器观察足端相对位置和base线速度，避免后腿跪地仍能靠关节角骗过AMP。
+        amp_include_foot_pos_lin_vel = True
 
     class init_state( LeggedRobotCfg.init_state ):
         pos = [0.0, 0.0, 0.35]  # 0.36   # 初始位置（x,y,z）单位：米
@@ -86,16 +86,17 @@ class Cc1JumpwtwAmpCfg( LeggedRobotCfg ):
         }
 
     class terrain( LeggedRobotCfg.terrain ):
-        mesh_type = 'trimesh' # "heightfield" # none, plane, heightfield or trimesh
+        # mesh_type = 'trimesh' # "heightfield" # none, plane, heightfield or trimesh
+        mesh_type = 'plane'
         horizontal_scale = 0.1 # [m]
         vertical_scale = 0.005 # [m]
         border_size = 15 # [m]
-        curriculum = True
+        curriculum = False
         static_friction = 1.0
         dynamic_friction = 1.0
         restitution = 0.
         # rough terrain only:
-        measure_heights = True
+        measure_heights = False
         measured_points_x = [-0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0., 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8] # 1mx1.6m rectangle (without center line)
         measured_points_y = [-0.5, -0.4, -0.3, -0.2, -0.1, 0., 0.1, 0.2, 0.3, 0.4, 0.5]
         selected = False # select a unique terrain type and pass all arguments
@@ -120,40 +121,45 @@ class Cc1JumpwtwAmpCfg( LeggedRobotCfg ):
         hip_reduction = 1 # 髋关节扭矩缩放因子（用于平衡前后腿负载）
 
     class commands( LeggedRobotCfg.commands ):
-        curriculum = True
+        # AMP expert is a forward pronk clip; keep commands fixed until forward
+        # jumping is straight and stable, otherwise y curriculum teaches drift.
+        curriculum = False
         max_forward_curriculum = 2.2  # 速度课程上限保留；本任务实际采样范围由 ranges.lin_vel_x 控制
         max_backward_curriculum = 1.5
-        max_lat_curriculum = 1.0  # y_vel 限制 [-1.0, 1.0]
+        max_lat_curriculum = 0.0  # 前跳AMP先禁止自动扩展横向命令，避免斜跳
         num_commands = 4 # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
         resampling_time = 10. # time before command are changed[s]
         heading_command = False # if true: compute ang vel command from heading error
         stand_still_command = True  # 保留少量零速样本，让不给指令/停下时能稳定站住
-        Rotate_command = True  # 先只训练前向连续跳，不混入原地旋转/侧向动作
+        Rotate_command = False  # 第一阶段只匹配专家数据中的直线前向连续跳
         pacing_offset = False
 
-        sudden_stop_command = False  # 运动中随机把速度指令突变为 0，训练连续跳到站立的刹停能力
-        # sudden_stop_interval_s = 2.0
-        # sudden_stop_env_ratio_range = [0.08, 0.15]
-        # sudden_stop_duration_s = [0.5, 1.2]
-        # sudden_stop_min_speed = 0.25
-        # sudden_stop_min_yaw_speed = 0.25
-        # sudden_stop_min_episode_time_s = 1.0
+        sudden_stop_command = False
+        sudden_stop_phase_aware = True
+        sudden_stop_restore_command = True
+        sudden_stop_interval_s = 3.0
+        sudden_stop_env_ratio_range = [0.10, 0.15]
+        sudden_stop_duration_s = [0.8, 1.5]
+        sudden_stop_min_speed = 0.20
+        sudden_stop_min_yaw_speed = 0.20
+        sudden_stop_min_episode_time_s = 2.0
 
-        # 连续四脚跳
-        frequencies = 2.0  # 3.0
+        # jump.bvh 的高度峰间隔约 0.833 s，对应 1.2 Hz 连续四脚跳。
+        frequencies = 1.2
         phases = 0
         offsets = 0
         bounds = 0
         durations = 0.5
 
         class ranges( LeggedRobotCfg.commands.ranges ):
-            lin_vel_x = [-0.8, 0.8]
-            lin_vel_y = [-0.6, 0.6]
-            ang_vel_yaw = [-1.0, 1.0]
+            # jump.bvh 平均前进速度约 0.92 m/s；先在专家分布附近学习动作风格。
+            lin_vel_x = [0.0, 1.0]
+            lin_vel_y = [0.0, 0.0]
+            ang_vel_yaw = [0.0, 0.0]
             heading = [-math.pi, math.pi]
 
     class asset( LeggedRobotCfg.asset ):
-        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/CC1_modified/urdf/CC1_0313.urdf'
+        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/CC1_0626/urdf/CC1_0626.urdf'
         name = "Cc1"
         foot_name = "FOOT"
         penalize_contacts_on = ["THIGH", "TORSO", "SHANK"]
@@ -259,18 +265,20 @@ class Cc1JumpwtwAmpCfg( LeggedRobotCfg ):
     class rewards( LeggedRobotCfg.rewards ):
         class scales( ):
             # general
-            # termination = -5.0  # THIGH/SHANK/TORSO 触地终止时给惩罚，避免跪地/摔倒局部最优
+            termination = -100.  # THIGH/SHANK/TORSO 触地终止时给惩罚，避免跪地/摔倒局部最优
 
             # velocity-tracking
             tracking_lin_vel = 3.0  # 先降低前向速度压力，避免后腿单独猛蹬导致前栽
-            tracking_ang_vel = 3.0  # yaw 速度跟踪；当前 yaw 命令为 0，因此主要帮助抑制起跳/落地扭身
+            tracking_ang_vel = 1.0  # yaw 速度跟踪；当前 yaw 命令为 0，因此主要帮助抑制起跳/落地扭身
+            straight_lin_vel_y = -2.0  # 纯前跳时强压横向速度，减少每次腾空/落地后的侧向偏离
+            straight_yaw_vel = -2.0  # 纯前跳时强压自发偏航，避免跳着跳着斜出去
 
             # root
             lin_vel_z = -0.1  # -0.2  # z 速度惩罚刻意很弱，避免把向上起跳速度压没
             ang_vel_xy = -0.05  # -0.05  # 全周期轻度抑制 roll/pitch 角速度，主要稳定落地和起跳过渡
             orientation = -5.0  # -2.0  # 惩罚 base 姿态偏斜，优先把空中和落地姿态压稳
-            # stop_orientation = -3.0  # 零速/急停时额外压住身体点头和侧倾，让停住更稳
-            # stop_ang_vel_xy = -1.0  # 零速/急停时抑制 roll/pitch 角速度，减少停下后的晃动
+            # stop_orientation = -2.0  # 急停零速保持阶段压住身体点头和侧倾
+            # stop_ang_vel_xy = -0.0  # 急停零速保持阶段抑制 roll/pitch 角速度
             base_height = -20.0  # -20.0  # 防止低趴/跪地局部最优；真正跳高仍由 jump_height / jump_z_vel / jump_takeoff_z_vel 驱动
             # base_height_vel = -4.0  # base 目标高度速度 惩罚
 
@@ -281,7 +289,7 @@ class Cc1JumpwtwAmpCfg( LeggedRobotCfg ):
             # dof_vel = -0.0  # 关节速度过大 惩罚
             dof_acc = -2.5e-7  # 关节加速度 惩罚（若步态抖动，可增大惩罚）
             stand_still = -0.5  # 零速时把关节拉回默认站姿，避免停下后继续蹦/乱摆腿
-            hip_pos = -0.4  # hip关节位置与默认位置的 偏差 惩罚，(原地不动 或 原地旋转) 时惩罚系数为 5.0，其他为 1.0
+            hip_pos = -0.2  # hip关节位置与默认位置的 偏差 惩罚，(原地不动 或 原地旋转) 时惩罚系数为 5.0，其他为 1.0
             # thigh_pose = -0.1
             # calf_pose = -0.1
             # dof_pos_limits = -0.0  # 关节位置接近极限 惩罚
@@ -296,13 +304,13 @@ class Cc1JumpwtwAmpCfg( LeggedRobotCfg ):
             # hip_action_magnitude = -0.00  # action 中的 髋关节hip（0,3,6,9）动作幅度 惩罚（防止 > 1.0）
 
             # contact
-            # collision = -2.0  # -1.0 # THIGH/SHANK/TORSO 触地强惩罚，防止膝盖/小腿当支撑点跪地
-            # feet_contact_forces = -0.00015  # 四足的接触力 > 100N 惩罚
+            collision = -5.0  # THIGH/SHANK/TORSO 触地强惩罚
+            feet_contact_forces = -0.00015  # 四足的接触力 > 100N 惩罚
 
             # others
             # feet_air_time = 0.0  # 四足的空中时间接近0.5s 奖励 (原地不动时除外)
-            feet_air_time_variance_velocity = -10.0  # 抑制四脚腾空时间差异，辅助四脚同步跳
-            has_contact = 2.0  # 零速时奖励四脚都触地，帮助不给指令时稳定站住
+            feet_air_time_variance_velocity = 0.0  # -10.0  # 抑制四脚腾空时间差异，辅助四脚同步跳
+            # has_contact = 1.0  # 零速时奖励四脚都触地，帮助不给指令时稳定站住
             # feet_stumble = -0.0  # 四足接触到垂直表面 惩罚
             feet_slide = -0.05  # 触地脚滑动惩罚，帮助落地不打滑
             # feet_clearance_base = -2.0  # 大速度下 四足距base目标距离 惩罚
@@ -312,20 +320,36 @@ class Cc1JumpwtwAmpCfg( LeggedRobotCfg ):
             # upward = 0.0  # 重力投影向下 奖励（恢复训练时开启）
 
             # feet
-            raibert_heuristic = -10.0  # Raibert启发式奖励：根据当前base速度和步态周期计算理想的足部位置，奖励与理想位置的接近程度。鼓励足部在适当位置着地以稳定运动。
+            raibert_heuristic = 0.0  # -10.0  # Raibert启发式奖励：根据当前base速度和步态周期计算理想的足部位置，奖励与理想位置的接近程度。鼓励足部在适当位置着地以稳定运动。
             # tracking_contacts_shaped_force = 2.0
             # tracking_contacts_shaped_vel = 2.0
-            tracking_contacts_shaped_force = 1.0
-            tracking_contacts_shaped_vel = 1.0
-            feet_clearance_cmd_linear = -30.0  # 沿用 WTW 足端高度约束，防止无意义拖脚/乱抬脚
-            jump = 2.0  # 奖励四脚处于一致接触状态：要么四脚都触地蓄力/落地，要么四脚都离地
+            tracking_contacts_shaped_force = 0.2
+            tracking_contacts_shaped_vel = 0.2
+            feet_clearance_cmd_linear = 0.0  # -30.0  # 沿用 WTW 足端高度约束，防止无意义拖脚/乱抬脚
+            shank_clearance = -50.0  # 小腿接触前即惩罚过低，提供从跪姿撑起的连续梯度
+
+            # AMP 的目标是模仿 jump.bvh 里的自然不对称弹跳，不再额外强制四脚绝对同步/对称。
+            jump_flight_phase_air = 0.2  # 若专家数据腾空相非常清晰，可低权重打开；默认交给AMP判别器学习
+            jump_height = 0.5  # 按 jump.bvh 的高度范围奖励真实腾空高度
+            jump_takeoff_z_vel = 0.3  # 支撑末段鼓励产生专家级向上速度
+            jump_flight_pitch_stable = -1.0  # 空中单独压住后仰/抬头和pitch角速度，减少腾空姿态发散
+            jump_landing_stable = 1.0  # 落地/恢复相保持水平、抑制晃动，同时继续跟踪 x/y/yaw 命令
+            jump_takeoff_x_vel = 0.2  # 先减小前向起跳奖励，等四腿同步稳定后再逐步加回
+            jump_push_pitch = -1.0  # 蹬地阶段先压住俯仰角动量，避免把后仰趋势带入空中
+            # jump = 2.0  # 不奖励四脚必须处于完全一致接触状态
+            # jump_z_vel = 0.4  # 四脚都离地时奖励向上 z 速度，辅助提高腾空上升段
+            # jump_mixed_contact = -1.5  # 不惩罚专家数据里可能存在的前后腿错峰起跳/落地
+            # jump_landing_async = -4.0  # 不强制四脚同帧落地
+            # jump_landing_force_balance = -0.4  # 不强制落地受力完全对称
+            # jump_leg_symmetry = -0.6  # 不强制四腿关节轨迹镜像一致
+            # jump_hind_first_landing = -0.5  # 前跳时轻量惩罚后脚先落地，补充四脚同步落地约束
 
 
         reward_curriculum = False
         reward_curriculum_term = ["feet_edge"]
         reward_curriculum_schedule = [[4000, 10000, 0.1, 1.0]]
 
-        only_positive_rewards = True  # 保留负奖励，便于惩罚半接触和深蹲落地；若早期完全学不动再考虑 True
+        only_positive_rewards = False  # 保留负奖励，便于惩罚半接触和深蹲落地；若早期完全学不动再考虑 True
         tracking_sigma = 0.20  # 跟踪奖励的高斯分布标准差 = exp(-error^2 / sigma)
         soft_dof_pos_limit = 0.95   # 关节位置软限位：关节角度超过URDF限位95%时触发惩罚。调低（如0.9）可提前约束
         soft_dof_vel_limit = 0.95   # 关节速度软限位：超过最大速度95%时惩罚。保护电机模型不过载
@@ -345,6 +369,36 @@ class Cc1JumpwtwAmpCfg( LeggedRobotCfg ):
         kappa_gait_probs = 0.07
         gait_force_sigma = 100.
         gait_vel_sigma = 10.
+
+        jump_phase_compress_end = 0.15
+        jump_phase_push_end = 0.50
+        jump_phase_flight_end = 0.95
+        jump_phase_land_end = 0.98
+        jump_height_min = 0.34
+        jump_height_target = 0.45
+        jump_takeoff_z_vel_min = 0.10
+        jump_takeoff_z_vel_target = 0.75
+        jump_takeoff_require_contact = True
+        shank_clearance_target = 0.18
+        jump_flight_pitch_deadband = 0.03  # 允许约2度自然俯仰误差
+        jump_flight_pitch_vel_deadband = 0.18  # 允许少量自然pitch角速度
+        jump_flight_pitch_use_phase_mask = False  # 按真实四脚腾空触发，避免相位漂移漏罚
+        jump_flight_pitch_weight = 1.0
+        jump_flight_roll_weight = 0.5
+        jump_flight_roll_deadband = 0.04
+        jump_flight_backward_pitch_weight = 2.5  # 额外惩罚后仰，专门处理空中抬头
+        jump_flight_backward_pitch_deadband = 0.02
+        jump_flight_backward_pitch_direction = -1.0  # projected_gravity[:,0] < 0 视为后仰
+        jump_flight_pitch_vel_weight = 0.7
+        jump_flight_backward_pitch_vel_weight = 1.0  # 额外压住继续后仰的pitch角速度
+        jump_flight_backward_pitch_vel_deadband = 0.08
+        jump_flight_backward_pitch_vel_direction = -1.0
+        jump_flight_backward_pitch_delta_weight = 0.8  # 惩罚单步内突然增加的抬头角速度
+        jump_flight_backward_pitch_delta_deadband = 0.06
+        jump_flight_apex_z_vel_window = 0.18
+        jump_flight_apex_pitch_vel_extra_scale = 1.0  # 最高点附近加强pitch角速度惩罚
+        jump_flight_roll_vel_weight = 0.35
+        jump_flight_roll_vel_deadband = 0.20
 
 
     class normalization:

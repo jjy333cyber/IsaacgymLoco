@@ -118,7 +118,7 @@ class Cc1JumpCfg( LeggedRobotCfg ):
             heading = [-math.pi, math.pi]
 
     class asset( LeggedRobotCfg.asset ):
-        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/CC1_modified/urdf/CC1_0313.urdf'
+        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/CC1_0626/urdf/CC1_0626.urdf'
         name = "Cc1"
         foot_name = "FOOT"
         penalize_contacts_on = ["THIGH", "TORSO", "SHANK"]

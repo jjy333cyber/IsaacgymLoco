@@ -74,7 +74,10 @@ class AMPOnPolicyRunner:
         amp_data = AMPLoader(
             device, time_between_frames=self.env.dt, preload_transitions=True,
             num_preload_transitions=train_cfg['runner']['amp_num_preload_transitions'],
-            motion_files=self.cfg["amp_motion_files"])
+            motion_files=self.cfg["amp_motion_files"],
+            include_foot_pos_lin_vel=getattr(
+                self.env.cfg.env, "amp_include_foot_pos_lin_vel", False
+            ))
         amp_normalizer = Normalizer(amp_data.observation_dim)
         discriminator = AMPDiscriminator(
             amp_data.observation_dim * 2,

@@ -198,14 +198,14 @@ def get_args(custom_args=[]):
     #     args.sim_device += f":{args.sim_device_id}"
     return args
 
-def export_policy_as_jit(actor_critic, path):
+def export_policy_as_jit(actor_critic, path, filename=None):
     if hasattr(actor_critic, 'estimator'):
         # assumes LSTM: TODO add GRU
         exporter = PolicyExporterHIM(actor_critic)
-        exporter.export(path)
+        exporter.export(path, filename=filename or 'policy.pt')
     else: 
         os.makedirs(path, exist_ok=True)
-        path = os.path.join(path, 'policy_1.pt')
+        path = os.path.join(path, filename or 'policy_1.pt')
         model = copy.deepcopy(actor_critic.actor).to('cpu')
         traced_script_module = torch.jit.script(model)
         traced_script_module.save(path)
@@ -213,15 +213,15 @@ def export_policy_as_jit(actor_critic, path):
 
 
 
-def export_policy_as_onnx(actor_critic, path, input_size, opset_version=11):
+def export_policy_as_onnx(actor_critic, path, input_size, opset_version=11, filename=None):
     os.makedirs(path, exist_ok=True)
     if hasattr(actor_critic, 'estimator'):
         model = PolicyExporterHIM(actor_critic).to('cpu')
-        onnx_path = os.path.join(path, 'policy.onnx')
+        onnx_path = os.path.join(path, filename or 'policy.onnx')
         input_name = 'state'
     else:
         model = copy.deepcopy(actor_critic.actor).to('cpu')
-        onnx_path = os.path.join(path, 'policy_1.onnx')
+        onnx_path = os.path.join(path, filename or 'policy_1.onnx')
         input_name = 'state'
         input_size = model[0].in_features
 
@@ -263,7 +263,7 @@ def export_policy_as_onnx(actor_critic, path, input_size, opset_version=11):
 #         self.hidden_state[:] = 0.
 #         self.cell_state[:] = 0.
 
-#     def export(self, path):
+#     def export(self, path, filename='policy.pt'):
 #         os.makedirs(path, exist_ok=True)
 #         path = os.path.join(path, 'policy_lstm.pt')
 #         self.to('cpu')
@@ -283,9 +283,9 @@ class PolicyExporterHIM(torch.nn.Module):
         obs_dim = self.actor[0].in_features - (vel.shape[1] + z.shape[1])
         return self.actor(torch.cat((obs_history[:, 0:obs_dim], vel, z), dim=1))
 
-    def export(self, path):
+    def export(self, path, filename='policy.pt'):
         os.makedirs(path, exist_ok=True)
-        path = os.path.join(path, 'policy.pt')
+        path = os.path.join(path, filename)
         self.to('cpu')
         traced_script_module = torch.jit.script(self)
         traced_script_module.save(path)

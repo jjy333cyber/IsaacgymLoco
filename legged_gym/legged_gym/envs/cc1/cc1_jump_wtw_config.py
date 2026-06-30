@@ -65,16 +65,6 @@ class Cc1JumpwtwCfg( LeggedRobotCfg ):
             'HL_Knee_joint': 1.6,
             'FR_Knee_joint': 1.6,
             'HR_Knee_joint': 1.6,
-
-            # 'FL_HipY_joint': -0.5,
-            # 'HL_HipY_joint': -0.5,
-            # 'FR_HipY_joint': -0.5,
-            # 'HR_HipY_joint': -0.5,
-
-            # 'FL_Knee_joint': 1.0,
-            # 'HL_Knee_joint': 1.0,
-            # 'FR_Knee_joint': 1.0,
-            # 'HR_Knee_joint': 1.0,
         }
 
     class terrain( LeggedRobotCfg.terrain ):
@@ -116,6 +106,7 @@ class Cc1JumpwtwCfg( LeggedRobotCfg ):
         max_forward_curriculum = 2.2  # 速度课程上限保留；本任务实际采样范围由 ranges.lin_vel_x 控制
         max_backward_curriculum = 1.5
         max_lat_curriculum = 1.0  # y_vel 限制 [-1.0, 1.0]
+        max_yaw_curriculum = 1.5
         num_commands = 4 # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
         resampling_time = 10. # time before command are changed[s]
         heading_command = False # if true: compute ang vel command from heading error
@@ -123,16 +114,19 @@ class Cc1JumpwtwCfg( LeggedRobotCfg ):
         Rotate_command = True  # 先只训练前向连续跳，不混入原地旋转/侧向动作
         pacing_offset = False
 
-        sudden_stop_command = False  # 运动中随机把速度指令突变为 0，训练连续跳到站立的刹停能力
-        # sudden_stop_interval_s = 2.0
-        # sudden_stop_env_ratio_range = [0.08, 0.15]
-        # sudden_stop_duration_s = [0.5, 1.2]
-        # sudden_stop_min_speed = 0.25
-        # sudden_stop_min_yaw_speed = 0.25
-        # sudden_stop_min_episode_time_s = 1.0
+        # 随机发出急停请求，但等待机器人完成当前一跳并四脚落地后才清零命令。
+        sudden_stop_command = True
+        sudden_stop_phase_aware = True
+        sudden_stop_restore_command = True
+        sudden_stop_interval_s = 3.0
+        sudden_stop_env_ratio_range = [0.10, 0.15]
+        sudden_stop_duration_s = [0.8, 1.5]
+        sudden_stop_min_speed = 0.20
+        sudden_stop_min_yaw_speed = 0.20
+        sudden_stop_min_episode_time_s = 2.0
 
-        # 连续四脚跳
-        frequencies = 2.0  # 3.0
+        # 连续四脚跳，周期0.5-0.6s
+        frequencies = 1.8
         phases = 0
         offsets = 0
         bounds = 0
@@ -145,7 +139,7 @@ class Cc1JumpwtwCfg( LeggedRobotCfg ):
             heading = [-math.pi, math.pi]
 
     class asset( LeggedRobotCfg.asset ):
-        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/CC1_modified/urdf/CC1_0313.urdf'
+        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/CC1_0626/urdf/CC1_0626.urdf'
         name = "Cc1"
         foot_name = "FOOT"
         penalize_contacts_on = ["THIGH", "TORSO", "SHANK"]
@@ -256,13 +250,15 @@ class Cc1JumpwtwCfg( LeggedRobotCfg ):
             # velocity-tracking
             tracking_lin_vel = 3.0  # 先降低前向速度压力，避免后腿单独猛蹬导致前栽
             tracking_ang_vel = 3.0  # yaw 速度跟踪；当前 yaw 命令为 0，因此主要帮助抑制起跳/落地扭身
+            straight_lin_vel_y = -1.0  # 纯前进命令时惩罚侧向漂移，减少连续跳逐步走偏
+            straight_yaw_vel = -1.0  # 纯前进命令时惩罚自发偏航
 
             # root
             lin_vel_z = -0.1  # -0.2  # z 速度惩罚刻意很弱，避免把向上起跳速度压没
             ang_vel_xy = -0.05  # -0.05  # 全周期轻度抑制 roll/pitch 角速度，主要稳定落地和起跳过渡
             orientation = -5.0  # -2.0  # 惩罚 base 姿态偏斜，优先把空中和落地姿态压稳
-            # stop_orientation = -3.0  # 零速/急停时额外压住身体点头和侧倾，让停住更稳
-            # stop_ang_vel_xy = -1.0  # 零速/急停时抑制 roll/pitch 角速度，减少停下后的晃动
+            stop_orientation = -3.0  # 急停零速保持阶段压住身体点头和侧倾
+            stop_ang_vel_xy = -0.8  # 急停零速保持阶段抑制 roll/pitch 角速度
             base_height = -20.0  # -20.0  # 防止低趴/跪地局部最优；真正跳高仍由 jump_height / jump_z_vel / jump_takeoff_z_vel 驱动
             # base_height_vel = -4.0  # base 目标高度速度 惩罚
 
@@ -315,38 +311,31 @@ class Cc1JumpwtwCfg( LeggedRobotCfg ):
             # 跳跃结构奖励：目标是“更高、更快、更远”的连续四脚同步前向跳。
             # jump_air_time = 0.0
             # jump_flight_phase_air = 0.8
-            jump_mixed_contact = -5.0  # 惩罚 1-3 只脚接触的半同步状态，减少前后腿分裂落地/起跳
-            jump_landing_async = -3.0  # 只在首次落地帧惩罚非四脚同时触地，重点压住落地分裂导致的摔倒
+            jump_mixed_contact = -1.5  # 惩罚 1-3 只脚接触的半同步状态，减少前后腿分裂落地/起跳
+            jump_landing_async = -4.0  # 首次落地时惩罚未四脚同时接触
+            jump_hind_first_landing = -0.5  # 前跳时轻量惩罚后脚先落地，补充四脚同步落地约束
+            jump_landing_stable = 1.5  # 落地/恢复相保持水平、抑制晃动，同时继续跟踪 x/y/yaw 命令
             jump_height = 4.0  # 四脚都离地时奖励 base 高度达到目标，直接推动跳得更高
-            jump_z_vel = 0.8  # 四脚都离地时奖励向上 z 速度，辅助提高腾空上升段
+            jump_z_vel = 0.4  # 四脚都离地时奖励向上 z 速度，辅助提高腾空上升段
             jump_takeoff_z_vel = 2.0  # 每个蹬伸 push 相位奖励向上起跳速度，是提高爆发力的主项
             jump_takeoff_x_vel = 0.6  # 先减小前向起跳奖励，等四腿同步稳定后再逐步加回
-            jump_push_pitch = -0.8  # push 蹬地阶段轻压点头/抬头，减少把俯仰角动量带进空中
+            jump_push_pitch = -1.6  # 蹬地阶段先压住俯仰角动量，避免把后仰趋势带入空中
             # jump_push_force_balance = -0.3  # push 阶段四脚垂直力要均衡，避免只有后腿出力
             # jump_push_front_hind_sync = -2.0  # 压缩/蹬伸阶段前后腿关节变化同步，强制前腿参与蹬地
             # jump_flight_orientation = -0.0  # 四脚离地时压住机身 roll/pitch，减少空中飘和翻身趋势
-            jump_flight_ang_vel_xy = -0.5  # 四脚离地时抑制 roll/pitch 角速度，让空中姿态更稳
-            jump_flight_pitch_stable = -2.0  # 四脚离地时专门压前后俯仰晃动，减少空中摆头/落地失稳
+            # jump_flight_ang_vel_xy = -0.5  # 已合并到 jump_flight_pitch_stable，避免重复惩罚
+            jump_flight_pitch_stable = -3.5  # 参考飞行相和真实腾空期都压住 roll/pitch 晃动
             # jump_landing_knee_bend = -2.0  # 落地/恢复阶段惩罚膝关节过度弯曲，避免落地完全蹲下
-            jump_landing_force_balance = -0.5  # 落地阶段惩罚四脚受力不均，减少单脚/两脚砸地导致的翻滚
+            jump_landing_force_balance = -0.4  # 落地阶段惩罚四脚受力不均
             # jump_hipx_landing = -0.8  # 落地/恢复阶段压住髋外展，减少前腿外八和侧向扭身
-            # jump_leg_symmetry = -2.2  # 全周期惩罚四腿关节差异，保持四脚同步弹跳
-
-            # 参考轨迹奖励目前默认关闭。若动作重新变乱，可逐项打开低权重作为柔性引导，不建议一次全开。
-            # jump_ref_base_height = 0.45
-            # jump_ref_z_vel = 0.30
-            # jump_ref_forward_vel = 1.2
-            # jump_ref_foot_height = 0.20
-            # jump_ref_contact = 0.35
-            # jump_ref_dof_pos = 0.12
-            # jump_ref_foot_pos = 0.35
+            jump_leg_symmetry = -0.6  # 仅在真实腾空时轻量约束左右后腿，压掉右后腿最高点单独二次蹬腿
 
 
         reward_curriculum = False
         reward_curriculum_term = ["feet_edge"]
         reward_curriculum_schedule = [[4000, 10000, 0.1, 1.0]]
 
-        only_positive_rewards = True  # 保留负奖励，便于惩罚半接触和深蹲落地；若早期完全学不动再考虑 True
+        only_positive_rewards = True  # 总奖励小于0时裁剪到0；负奖励仍会先抵消本步正奖励
         tracking_sigma = 0.20  # 跟踪奖励的高斯分布标准差 = exp(-error^2 / sigma)
         soft_dof_pos_limit = 0.95   # 关节位置软限位：关节角度超过URDF限位95%时触发惩罚。调低（如0.9）可提前约束
         soft_dof_vel_limit = 0.95   # 关节速度软限位：超过最大速度95%时惩罚。保护电机模型不过载
@@ -371,6 +360,10 @@ class Cc1JumpwtwCfg( LeggedRobotCfg ):
         # jump_contact_force_threshold = 5.0
         jump_min_command_speed = 0.05  # 速度命令超过该值才启用 jump 类奖励
         jump_min_yaw_speed = 0.05  # yaw 命令超过该值也可启用 jump 类奖励
+        straight_min_forward_speed = 0.20
+        straight_full_forward_speed = 1.0
+        straight_cmd_y_threshold = 0.15
+        straight_cmd_yaw_threshold = 0.15
         # jump_sync_air_only = False
 
         # 跳高和起跳速度目标。min 是开始给分的位置，target 是满分附近的目标。
@@ -382,81 +375,45 @@ class Cc1JumpwtwCfg( LeggedRobotCfg ):
         jump_takeoff_z_vel_target = 1.65  # push 相位向上起跳速度满分目标，调大可提高爆发但更容易摔
         jump_takeoff_x_vel_min = 0.2  # push 相位前向速度开始给分
         jump_takeoff_x_vel_target = 1.2  # 先稳住姿态，后续想跳更远再逐步加到 1.2~1.4
-        # jump_push_pitch_weight = 2.0
-        # jump_push_pitch_ang_vel_weight = 0.5
+        jump_takeoff_track_command_direction = True  # 前后/左右均沿命令方向奖励，纯转向时不额外向前推
+        jump_push_pitch_weight = 2.0
+        jump_push_pitch_ang_vel_weight = 1.0  # 起跳时重点抑制俯仰角速度，减少空中持续后仰
         # jump_push_balance_force_norm = 120.0
-        jump_flight_pitch_deadband = 0.04  # 允许约2~3度空中俯仰误差，超过后才惩罚
-        jump_flight_pitch_vel_deadband = 0.25  # 允许少量 pitch 角速度，避免把自然弹跳完全压死
+        jump_flight_pitch_deadband = 0.03  # 允许约2度空中俯仰误差
+        jump_flight_pitch_vel_deadband = 0.18  # 允许少量 pitch 角速度
+        jump_flight_pitch_use_phase_mask = False  # 按真实四脚腾空触发
         jump_flight_pitch_weight = 1.0
-        jump_flight_pitch_vel_weight = 0.45
+        jump_flight_roll_weight = 0.8  # 空中左右歪斜惩罚，压住跳起后的左右晃
+        jump_flight_roll_deadband = 0.03
+        jump_flight_backward_pitch_weight = 2.5  # 额外惩罚后仰，所有跳跃方向都生效
+        jump_flight_backward_pitch_deadband = 0.02
+        jump_flight_backward_pitch_direction = -1.0  # projected_gravity[:,0] < 0 视为后仰
+        jump_flight_pitch_vel_weight = 0.75
+        jump_flight_backward_pitch_vel_weight = 1.0  # 额外压住继续后仰的 pitch 角速度
+        jump_flight_backward_pitch_vel_deadband = 0.08
+        jump_flight_backward_pitch_vel_direction = -1.0
+        jump_flight_backward_pitch_delta_weight = 1.0  # 惩罚单个控制步内突然增加的抬头角速度
+        jump_flight_backward_pitch_delta_deadband = 0.06  # 允许少量自然变化，单位为每个policy步的rad/s变化量
+        jump_flight_apex_z_vel_window = 0.30  # 世界坐标z速度进入±0.30m/s时视为接近真实最高点
+        jump_flight_apex_pitch_vel_extra_scale = 1.25  # 最高点将pitch角速度及突变惩罚平滑增强到最多2.25倍
+        jump_flight_roll_vel_weight = 0.7  # 空中 roll 角速度惩罚，专门减小左右摇摆速度
+        jump_flight_roll_vel_deadband = 0.18
+        jump_leg_symmetry_hind_only = True  # 不锁死四条腿，只比较左右后腿的HipY/Knee
+        jump_leg_symmetry_flight_only = True  # 支撑和落地阶段允许两条后腿独立适应接触
+        jump_leg_symmetry_pos_deadband = 0.05  # 允许约0.05rad自然关节差异
+        jump_leg_symmetry_vel_deadband = 0.5  # 超过0.5rad/s的左右后腿速度差才开始惩罚
+        jump_leg_symmetry_vel_weight = 0.05  # 速度差只作轻量约束，避免压制正常收腿
+        # jump_forward_landing_min_command = 0.15
+        # jump_forward_landing_full_command = 0.8
+        jump_landing_stable_lin_weight = 1.0
+        jump_landing_stable_ang_weight = 0.6
+        jump_landing_stable_yaw_weight = 0.5
+        jump_landing_stable_tilt_weight = 2.5
+        jump_landing_stable_sigma = 0.35
+
         # jump_landing_knee_max = 1.55  # 落地/恢复阶段允许的最大膝关节弯曲，超过后按平方惩罚
         # jump_landing_balance_force_norm = 120.0  # 四脚落地力均衡归一化，越小越严格
         # jump_takeoff_require_contact = True
-        # jump_ref_forward_vel_min = 0.5
-        # jump_ref_forward_vel_target = 1.8
-
-        # 跳跃周期相位划分：压缩蓄力 -> 蹬伸 -> 腾空 -> 落地 -> 恢复。当前保持默认值。
-        # jump_phase_compress_end = 0.14
-        # jump_phase_push_end = 0.34
-        # jump_phase_flight_end = 0.74
-        # jump_phase_land_end = 0.88
-
-        # base 高度参考轨迹。默认关闭，打开后会更像“跟轨迹跳”，但权重过大会造成悬浮感。
-        # jump_ref_height_stance = 0.36
-        # jump_ref_height_compress = 0.32
-        # jump_ref_height_takeoff = 0.52
-        # jump_ref_height_apex = 0.64
-        # jump_ref_height_land = 0.36
-
-        # base z 速度参考轨迹。默认关闭，适合在跳高已成形后用低权重微调起落节奏。
-        # jump_ref_z_vel_compress = -0.25
-        # jump_ref_z_vel_push = 1.35
-        # jump_ref_z_vel_flight = 0.0
-        # jump_ref_z_vel_flight_up = 0.35
-        # jump_ref_z_vel_flight_down = -0.35
-        # jump_ref_z_vel_land = -0.30
-
-        # 足端参考轨迹。默认关闭；若出现前腿外八/左右不对称，可低权重打开 jump_ref_foot_pos。
-        # jump_ref_foot_height_stance = 0.02
-        # jump_ref_foot_height_flight = 0.12
-        # jump_ref_foot_x_front = 0.185
-        # jump_ref_foot_x_rear = -0.185
-        # jump_ref_foot_y_left = 0.16
-        # jump_ref_foot_y_right = -0.16
-        # jump_ref_foot_z_stance = -0.40
-        # jump_ref_foot_z_flight = -0.39
-        # jump_ref_foot_z_land = -0.40
-        # jump_ref_foot_x_sweep_back = -0.055
-        # jump_ref_foot_x_sweep_forward = 0.055
-        # jump_ref_foot_x_land_offset = 0.020
-        # jump_ref_foot_pos_weight_x = 0.45
-        # jump_ref_foot_pos_weight_y = 1.0
-        # jump_ref_foot_pos_weight_z = 0.10
-
-        # 关节参考轨迹。默认关闭；若打开，建议权重很小，否则容易把自然弹跳变成机械收腿。
-        # jump_ref_hip_y_compress = -0.95
-        # jump_ref_knee_compress = 1.85
-        # jump_ref_hip_y_push = -0.60
-        # jump_ref_knee_push = 1.15
-        # jump_ref_hip_y_flight = -0.72
-        # jump_ref_knee_flight = 1.40
-        # jump_ref_hip_y_land = -0.90
-        # jump_ref_knee_land = 1.75
-        # jump_ref_hip_y_recovery = -0.8
-        # jump_ref_knee_recovery = 1.6
-
-        # 参考轨迹误差容忍度和落地对称性参数。sigma 越大，跟踪越宽松。
-        # jump_ref_sigma_height = 0.06
-        # jump_ref_sigma_z_vel = 0.75
-        # jump_ref_sigma_foot = 0.06
-        # jump_ref_sigma_foot_pos = 0.025
-        # jump_ref_sigma_dof = 0.80
-
-        # 姿态保护：身体歪得太厉害时降低参考/对称类跟踪强度，优先保证不摔倒。
-        # tracking_relief_enabled = True
-        # tracking_relief_tilt_start = 0.25
-        # tracking_relief_tilt_end = 0.55
-        # tracking_relief_min_scale = 0.20
 
     class normalization:
         class obs_scales:

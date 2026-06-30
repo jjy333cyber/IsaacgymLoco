@@ -38,6 +38,8 @@
 """
 import os
 import sys
+import argparse
+import importlib
 from pathlib import Path
 LEGGED_GYM_ROOT_DIR = str(Path(__file__).resolve().parent.parent / 'legged_gym')
 RSL_RL_ROOT_DIR = str(Path(__file__).resolve().parent.parent / 'rsl_rl')
@@ -58,10 +60,11 @@ import legged_gym.utils.kinematics.urdf as pk
 import pybullet_data as pd
 
 from retarget_utils import *
-# import retarget_config_a1 as config
-# import retarget_config_aliengo as config
-# import retarget_config_lite3 as config
-import retarget_config_cc1 as config
+
+config_parser = argparse.ArgumentParser(add_help=False)
+config_parser.add_argument("--config", default="retarget_config_cc1")
+config_args, _ = config_parser.parse_known_args()
+config = importlib.import_module(config_args.config)
 
 POS_SIZE = 3
 ROT_SIZE = 4
@@ -79,10 +82,18 @@ GROUND_URDF_FILENAME = "plane_implicit.urdf"
 
 # reference motion
 # FRAME_DURATION = 0.01677
-FRAME_DURATION = 0.02
-REF_COORD_ROT = transformations.quaternion_from_euler(0.5 * np.pi, 0, 0)
+FRAME_DURATION = getattr(config, "FRAME_DURATION", 0.02)
+REF_COORD_ROT = getattr(
+    config,
+    "REF_COORD_ROT",
+    transformations.quaternion_from_euler(0.5 * np.pi, 0, 0),
+)
 REF_POS_OFFSET = np.array([0, 0, 0])
-REF_ROOT_ROT = transformations.quaternion_from_euler(0, 0, 0.47 * np.pi)
+REF_ROOT_ROT = getattr(
+    config,
+    "REF_ROOT_ROT",
+    transformations.quaternion_from_euler(0, 0, 0.47 * np.pi),
+)
 
 REF_PELVIS_JOINT_ID = 0
 REF_NECK_JOINT_ID = 3
@@ -502,8 +513,8 @@ def main(argv):
 
     p.removeAllUserDebugItems()
     # 读取原始关键点：shape (T, N*3)
-    joint_pos_data = load_ref_data(mocap_motion[1], mocap_motion[2],
-                     mocap_motion[3] + 1)
+    frame_end = None if mocap_motion[3] is None else mocap_motion[3] + 1
+    joint_pos_data = load_ref_data(mocap_motion[1], mocap_motion[2], frame_end)
 
     if "reverse" in mocap_motion[0]:
       joint_pos_data = np.flip(joint_pos_data, axis=0)
@@ -522,7 +533,13 @@ def main(argv):
     joint_pos_data = joint_pos_data[:-1, :]
 
     output_file = os.path.join(output_dir, f"{mocap_motion[0]}.txt")
-    output_motion(retarget_frames, output_file, mocap_motion[4], FRAME_DURATION)
+    output_motion(
+        retarget_frames,
+        output_file,
+        mocap_motion[4],
+        FRAME_DURATION,
+        joint_order=getattr(config, "OUTPUT_JOINT_ORDER", None),
+    )
 
     if config.VISUALIZE_RETARGETING:
       num_markers = joint_pos_data.shape[1]

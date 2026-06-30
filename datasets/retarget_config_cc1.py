@@ -17,7 +17,7 @@ VISUALIZE_RETARGETING = True
 
 # 目标机器人 URDF 路径（用于 IK、关节 id、link 名称等）
 URDF_FILENAME = (
-    f"{LEGGED_GYM_ROOT_DIR}/resources/robots/CC1_modified/urdf/CC1_0603.urdf"
+    f"{LEGGED_GYM_ROOT_DIR}/resources/robots/CC1_0626/urdf/CC1_0626.urdf"
 )
 
 # 重定向输出动作保存目录（生成的 mocap 动作 .txt 会写入该目录）
@@ -38,6 +38,11 @@ SIM_TOE_JOINT_IDS = [3, 7, 11, 15]
 SIM_HIP_JOINT_IDS = [1, 5, 9, 13]
 # 根（基座）位置的额外偏移（在 retarget_root_pose 结果上叠加，使模型在地面附近更合理）
 SIM_ROOT_OFFSET = np.array([0, 0, 0.0])
+# 机器人间重定向使用的 CC1 标称站立高度。源动作只提供相对高度变化，
+# 因此 Lite3 的 0.35 m 站高会映射到 CC1 的 0.42 m 站高。
+NOMINAL_ROOT_HEIGHT = 0.42
+# 相对高度变化缩放系数。1.0 表示保留源动作原本的蹲起和腾空幅度。
+ROOT_HEIGHT_SCALE = 1.0
 # 脚端目标的局部偏移（在 heading 坐标系下旋转到世界系后叠加到脚端目标）
 # 用于微调脚相对髋的位置，补偿 URDF 脚端参考点与期望接触点的不一致。
 # SIM_TOE_OFFSET_LOCAL = [

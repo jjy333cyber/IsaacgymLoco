@@ -39,7 +39,7 @@ def repo_root() -> Path:
 
 
 def default_cc1_urdf() -> Path:
-    return repo_root() / "legged_gym/resources/robots/CC1_modified/urdf/CC1_0603.urdf"
+    return repo_root() / "legged_gym/resources/robots/CC1_0626/urdf/CC1_0626.urdf"
 
 
 def load_motion(path: Path):

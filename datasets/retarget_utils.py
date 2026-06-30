@@ -87,7 +87,13 @@ def set_pose(robot, pose):
       pybullet.resetJointStateMultiDof(robot, j, j_pose, j_vel)
 
 
-def output_motion(frames, out_filename, motion_weight, frame_duration):
+def output_motion(
+    frames,
+    out_filename,
+    motion_weight,
+    frame_duration,
+    joint_order=None,
+):
   with open(out_filename, "w") as f:
     f.write("{\n")
     f.write("\"LoopMode\": \"Wrap\",\n")
@@ -95,6 +101,8 @@ def output_motion(frames, out_filename, motion_weight, frame_duration):
     f.write("\"EnableCycleOffsetPosition\": true,\n")
     f.write("\"EnableCycleOffsetRotation\": true,\n")
     f.write("\"MotionWeight\": " + str(motion_weight) + ",\n")
+    if joint_order is not None:
+      f.write("\"JointOrder\": \"" + str(joint_order) + "\",\n")
     f.write("\n")
 
     f.write("\"Frames\":\n")

@@ -56,16 +56,6 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
             'FR_HipX_joint': 0.0,
             'HR_HipX_joint': 0.0,
 
-            # 'FL_HipY_joint': -0.8,
-            # 'HL_HipY_joint': -0.8,
-            # 'FR_HipY_joint': -0.8,
-            # 'HR_HipY_joint': -0.8,
-
-            # 'FL_Knee_joint': 1.6,
-            # 'HL_Knee_joint': 1.6,
-            # 'FR_Knee_joint': 1.6,
-            # 'HR_Knee_joint': 1.6,
-
             # 'FL_HipY_joint': -0.4,
             # 'HL_HipY_joint': -0.4,
             # 'FR_HipY_joint': -0.4,
@@ -149,8 +139,8 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
         sudden_stop_interval_s = 2.0
         sudden_stop_env_ratio_range = [0.10, 0.20]
         sudden_stop_duration_s = [0.4, 1.0]
-        sudden_stop_min_speed = 0.25
-        sudden_stop_min_yaw_speed = 0.25
+        sudden_stop_min_speed = 0.1
+        sudden_stop_min_yaw_speed = 0.1
         sudden_stop_min_episode_time_s = 1.0
 
         # trot
@@ -181,11 +171,11 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
 
         # pace
         # Pace-like lateral gait: LF+LH swing together, RF+RH swing together.
-        # frequencies = 1.0
-        # phases = 0.5
-        # offsets = 0.5
-        # bounds = 0.0
-        # durations = 0.6
+        frequencies = 1.0
+        phases = 0.5
+        offsets = 0.5
+        bounds = 0.0
+        durations = 0.6
 
         # frequencies = 1.8
         # phases = 0.5
@@ -193,20 +183,20 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
         # bounds = 0.0
         # durations = 0.6
 
-        frequencies = 1.8
-        phases = 0.5
-        offsets = 0.5
-        bounds = 0.0
-        durations = 0.6
+        # frequencies = 1.5
+        # phases = 0.5
+        # offsets = 0.5
+        # bounds = 0.0
+        # durations = 0.6
 
         class ranges( LeggedRobotCfg.commands.ranges ):
-            lin_vel_x = [-1.0, 1.0]  # min max [m/s]
-            lin_vel_y = [-0.8, 0.8]  # min max [m/s]
-            ang_vel_yaw = [-1.2, 1.2]  # min max [rad/s]
+            lin_vel_x = [-0.5, 0.5]  # min max [m/s]
+            lin_vel_y = [-0.4, 0.4]  # min max [m/s]
+            ang_vel_yaw = [-0.6, 0.6]  # min max [rad/s]
             heading = [-math.pi, math.pi]
 
     class asset( LeggedRobotCfg.asset ):
-        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/CC1_modified/urdf/CC1_0313.urdf'
+        file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/CC1_0626/urdf/CC1_0626.urdf'
         name = "Cc1"
         foot_name = "FOOT"
         penalize_contacts_on = ["THIGH", "TORSO", "SHANK"]
@@ -347,7 +337,7 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
             # dof_vel = -0.0  # 关节速度过大 惩罚
             dof_acc = -2.5e-7  # 关节加速度 惩罚（若步态抖动，可增大惩罚）
             stand_still = -0.5  # -0.5  # (base原地不动 或 原地旋转) 时的 关节位置与默认关节位置的 偏差 惩罚
-            hip_pos = -0.4  # -0.4  # hip关节位置与默认位置的 偏差 惩罚，(原地不动 或 原地旋转) 时惩罚系数为 5.0，其他为 1.0
+            hip_pos = -0.4  # 适度限制HipX偏离默认位置，辅助抑制pace单侧支撑时四腿向内夹
             # thigh_pose = -0.01
             # calf_pose = -0.02
             # dof_pos_limits = -0.0  # 关节位置接近极限 惩罚
@@ -367,7 +357,7 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
             # others
             # feet_air_time = 1.0  # 四足的空中时间接近0.5s 奖励 (原地不动时除外)
             # feet_air_time_variance_velocity = -10.0
-            # has_contact = 5.0  # (base 原地不动) 时的 四足触地个数 奖励
+            has_contact = 5.0  # (base 原地不动) 时的 四足触地个数 奖励
             # feet_stumble = -0.0  # 四足接触到垂直表面 惩罚
             feet_slide = -0.08  # -0.05  # 脚接触地面具有相对base的速度 惩罚
             feet_soft_landing = -1.0  # 首次触地过重惩罚：降低落脚声和砸地感
@@ -394,6 +384,7 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
             lateral_pair_contact_hold = -0.1  # 支撑相中同侧前后腿应保持接触，避免一步内触地2-3次
             short_contact = -1.0  # 前进/后退时惩罚四条腿刚落地就立刻抬起，压掉一步内二次触地
             swing_contact = -2.0  # 四条腿明确摆动期提前触地惩罚，压掉摆腿末端蹭地/探地
+            # feet_inward = -2.5  # 运动中约束支撑/即将落地足的横向宽度，防止四腿内收导致机身下沉
 
 
         reward_curriculum = False
@@ -415,7 +406,9 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
         feet_height_target_terrain = 0.10  # 足部离地高度目标
         max_contact_force = 100.    # 四足接触力 > 100N 时触发惩罚的阈值
         # max_contact_force = 180.
-        target_foot_height = 0.1  # feet height
+        target_foot_height = 0.08  # feet height
+        feet_clearance_overheight_margin = 0.025  # 允许足端比参考轨迹高2.5cm，避免把自然摆腿压得过死
+        feet_clearance_overheight_weight = 4.0  # 超过余量后额外惩罚高抬腿，四条腿统一生效
         target_foot_height_yaw = 0.08  # feet height
         kappa_gait_probs = 0.07
         gait_force_sigma = 100.
@@ -451,14 +444,17 @@ class Cc1RoughwtwCfg( LeggedRobotCfg ):
         anti_trot_contact_threshold = 1.0
         lateral_pair_contact_threshold = 2.0
         lateral_pair_touchdown_cooldown_s = 0.20  # 同侧腿第一次触地后0.20s内再次触地也算二次落地，抓跨周期提前点地
-        short_contact_min_time_s = 0.10  # 默认一次落地至少保持0.10s，否则认为是点地/弹脚
-        front_contact_min_time_s = 0.12  # 前腿更容易造成身体下压/前倾，接触保持时间略长
-        hind_contact_min_time_s = 0.12  # 后腿保留一定蹬地自由度，避免把推进能力压掉
+        short_contact_min_time_s = 0.16  # 默认一次落地至少保持0.10s，否则认为是点地/弹脚
+        front_contact_min_time_s = 0.18  # 前腿更容易造成身体下压/前倾，接触保持时间略长
+        hind_contact_min_time_s = 0.18  # 后腿保留一定蹬地自由度，避免把推进能力压掉
         front_short_contact_weight = 1.3
         hind_short_contact_weight = 1.2
         swing_contact_threshold = 0.3  # desired_contact 低于该值才算明确摆动相，避免误罚相位切换落地
         lateral_pair_touchdown_phase_window = 0.10  # 同侧落地奖励只在每周期 stance 开始附近触发一次
         lateral_pair_takeoff_phase_window = 0.08  # 同侧离地奖励只在每周期 stance 结束附近触发一次
+        # feet_inward_min_lateral_distance = 0.15  # 每只脚距身体中线至少约15cm，目标总站宽约30cm
+        # feet_inward_contact_threshold = 2.0  # 实际足端法向力超过该值时按支撑足约束
+        # feet_inward_desired_contact_threshold = 0.35  # 落地准备及支撑相提前启用横向宽度约束
 
     class normalization:
         class obs_scales:

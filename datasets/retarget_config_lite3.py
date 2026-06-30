@@ -38,6 +38,9 @@ SIM_TOE_JOINT_IDS = [3, 7, 11, 15]
 SIM_HIP_JOINT_IDS = [1, 5, 9, 13]
 # 根（基座）位置的额外偏移（在 retarget_root_pose 结果上叠加，使模型在地面附近更合理）
 SIM_ROOT_OFFSET = np.array([0, 0, -0.00])
+# 机器人间重定向使用的标称站立高度。目标机器人不会复制该绝对高度，
+# 只会继承动作相对该高度的蹲起、腾空等变化。
+NOMINAL_ROOT_HEIGHT = 0.35
 # 脚端目标的局部偏移（在 heading 坐标系下旋转到世界系后叠加到脚端目标）
 # 用于微调脚相对髋的位置，补偿 URDF 脚端参考点与期望接触点的不一致。
 SIM_TOE_OFFSET_LOCAL = [

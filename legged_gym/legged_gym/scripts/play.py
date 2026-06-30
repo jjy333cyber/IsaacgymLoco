@@ -43,7 +43,7 @@ import os
 import isaacgym
 from isaacgym import gymapi
 from legged_gym.envs import *
-from legged_gym.utils import  get_args, export_policy_as_jit, export_policy_as_onnx, task_registry, Logger
+from legged_gym.utils import  get_args, get_load_path, export_policy_as_jit, export_policy_as_onnx, task_registry, Logger
 
 import imageio
 import numpy as np
@@ -74,10 +74,28 @@ from legged_gym.utils.helpers import update_class_from_dict
 
 PRINT_BASE_STATE = True
 BASE_STATE_PRINT_INTERVAL = 50
+RANDOM_COMMANDS = False
+RANDOM_COMMAND_RESAMPLE_STEPS = 200
+RANDOM_COMMAND_X_RANGE = [0.2, 0.8]
+RANDOM_COMMAND_Y_RANGE = [0.0, 0.0]
+RANDOM_COMMAND_YAW_RANGE = [0.0, 0.0]
 
 
-def _get_policy_export_path(train_cfg):
-    return os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, args.load_run, 'policies')
+def _get_model_load_path(train_cfg):
+    load_root = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name)
+    load_run = getattr(train_cfg.runner, 'load_run', args.load_run)
+    checkpoint = getattr(train_cfg.runner, 'checkpoint', -1)
+    return get_load_path(load_root, load_run=load_run, checkpoint=checkpoint)
+
+
+def _get_policy_export_info(train_cfg):
+    model_path = _get_model_load_path(train_cfg)
+    export_path = os.path.join(os.path.dirname(model_path), 'policies')
+    model_stem = os.path.splitext(os.path.basename(model_path))[0]
+    if model_stem.startswith('model_'):
+        suffix = model_stem[len('model_'):]
+        return export_path, f'policy_{suffix}.pt', f'policy_{suffix}.onnx', model_path
+    return export_path, 'policy.pt', 'policy.onnx', model_path
 
 
 def _get_base_height(env, robot_index):
@@ -93,7 +111,25 @@ def _get_base_pitch(env, robot_index):
     return torch.asin(sin_pitch).item()
 
 
-def play(args, x_vel=1.0, y_vel=0.0, yaw_vel=0.0):
+def _sample_play_commands(env, x_vel=0.3, y_vel=0.0, yaw_vel=0.0):
+    if not RANDOM_COMMANDS:
+        return (
+            torch.ones(env.num_envs, device=env.device) * x_vel,
+            torch.ones(env.num_envs, device=env.device) * y_vel,
+            torch.ones(env.num_envs, device=env.device) * yaw_vel,
+        )
+
+    x_min, x_max = RANDOM_COMMAND_X_RANGE
+    y_min, y_max = RANDOM_COMMAND_Y_RANGE
+    yaw_min, yaw_max = RANDOM_COMMAND_YAW_RANGE
+    return (
+        torch.rand(env.num_envs, device=env.device) * (x_max - x_min) + x_min,
+        torch.rand(env.num_envs, device=env.device) * (y_max - y_min) + y_min,
+        torch.rand(env.num_envs, device=env.device) * (yaw_max - yaw_min) + yaw_min,
+    )
+
+
+def play(args, x_vel=0.3, y_vel=0.0, yaw_vel=0.0):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     if args.load_cfg:
         json_path = os.path.join("legged_gym/logs", train_cfg.runner.experiment_name, args.load_run, "config.json")
@@ -151,10 +187,19 @@ def play(args, x_vel=1.0, y_vel=0.0, yaw_vel=0.0):
 
     # export policy as a jit module (used to run it from C++)
     if EXPORT_POLICY:
-        path = _get_policy_export_path(train_cfg)
-        export_policy_as_jit(ppo_runner.alg.actor_critic, path)
-        export_policy_as_onnx(ppo_runner.alg.actor_critic, path, obs.shape[-1], opset_version=11)
-        print('[INFO] Exported policy as jit script and onnx to: ', path)
+        path, jit_filename, onnx_filename, model_path = _get_policy_export_info(train_cfg)
+        export_policy_as_jit(ppo_runner.alg.actor_critic, path, filename=jit_filename)
+        export_policy_as_onnx(
+            ppo_runner.alg.actor_critic,
+            path,
+            obs.shape[-1],
+            opset_version=11,
+            filename=onnx_filename,
+        )
+        print(
+            '[INFO] Exported policy from '
+            f'{os.path.basename(model_path)} as {jit_filename} and {onnx_filename} to: {path}'
+        )
 
     logger = Logger(env.dt)
     robot_index = 0 # which robot is used for logging
@@ -170,20 +215,20 @@ def play(args, x_vel=1.0, y_vel=0.0, yaw_vel=0.0):
     img_idx = 0
     env.set_camera(camera_position, lookat_position)
 
-    # Use fixed commands by default so play reflects the requested behavior.
-    if RANDOM_COMMANDS:
-        x_vel = 2 * x_vel * torch.rand(env.num_envs, device=env.device) - x_vel
-        y_vel = 2 * y_vel * torch.rand(env.num_envs, device=env.device) - y_vel
-        yaw_vel = 2 * yaw_vel * torch.rand(env.num_envs, device=env.device) - yaw_vel
-    else:
-        x_vel = torch.ones(env.num_envs, device=env.device) * x_vel
-        y_vel = torch.ones(env.num_envs, device=env.device) * y_vel
-        yaw_vel = torch.ones(env.num_envs, device=env.device) * yaw_vel
+    x_vel, y_vel, yaw_vel = _sample_play_commands(env, x_vel, y_vel, yaw_vel)
 
     for i in range(10 * int(env.max_episode_length)):
     
         actions = policy(obs.detach())
         if not single_jump_flag_mode:
+            if RANDOM_COMMANDS and i % RANDOM_COMMAND_RESAMPLE_STEPS == 0:
+                x_vel, y_vel, yaw_vel = _sample_play_commands(env)
+                print(
+                    "[play] resampled commands "
+                    f"x=[{x_vel.min().item():.2f}, {x_vel.max().item():.2f}] "
+                    f"y=[{y_vel.min().item():.2f}, {y_vel.max().item():.2f}] "
+                    f"yaw=[{yaw_vel.min().item():.2f}, {yaw_vel.max().item():.2f}]"
+                )
             env.commands[:, 0] = x_vel
             env.commands[:, 1] = y_vel
             env.commands[:, 2] = yaw_vel
@@ -258,10 +303,14 @@ if __name__ == '__main__':
     EXPORT_POLICY = True
     RECORD_FRAMES = False
     MOVE_CAMERA = True
-    RANDOM_COMMANDS = True
-    # RANDOM_COMMANDS = False
+    # RANDOM_COMMANDS = True
+    RANDOM_COMMANDS = False
+    RANDOM_COMMAND_RESAMPLE_STEPS = 200
+    RANDOM_COMMAND_X_RANGE = [0.0, 0.5]
+    RANDOM_COMMAND_Y_RANGE = [0.0, 0.0]
+    RANDOM_COMMAND_YAW_RANGE = [0.0, 0.0]
     args = get_args([
         dict(name="--load_cfg", action="store_true", default=False, help="use the config from the logdir"),
     ])
-    play(args)
-    # play(args, x_vel=2.0, y_vel=0.0, yaw_vel=0.0)
+    # play(args)
+    play(args, x_vel=0.4, y_vel=0.0, yaw_vel=0.0)
