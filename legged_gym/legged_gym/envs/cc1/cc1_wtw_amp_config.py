@@ -35,7 +35,7 @@ from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobot
 
 PROJECT_ROOT_DIR = MOTION_FILES_DIR.parent
 MOTION_FILES = []
-MOTION_FILES.extend(glob.glob(str(PROJECT_ROOT_DIR / "cc1_manzou0615/*.txt")))
+MOTION_FILES.extend(glob.glob(str(PROJECT_ROOT_DIR / "cc1_manzou0629/*.txt")))
 
 class Cc1RoughwtwAmpCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
@@ -144,7 +144,7 @@ class Cc1RoughwtwAmpCfg( LeggedRobotCfg ):
         # walk.bvh 落脚顺序 HL -> FL -> HR -> FR；降低频率并加长支撑相，减少训练后落地频率过高。
         frequencies = 1.2
         phases = 0.5
-        offsets = 0.2
+        offsets = 0.3
         bounds = 0.0
         durations = 0.65
 
@@ -269,21 +269,21 @@ class Cc1RoughwtwAmpCfg( LeggedRobotCfg ):
             tracking_ang_vel = 0.5  # commands 中yaw方向的角速度跟踪奖励
 
             # 新加
-            straight_lin_vel_y = -2.0  # 前进直行命令时抑制横向漂移
+            straight_lin_vel_y = -3.0  # 前进直行命令时抑制横向漂移
             straight_yaw_vel = -2.0  # 前进直行命令时抑制偏航漂移
-            forward_backward_orientation = -5.0  # 前进/后退都压住俯仰失衡
+            forward_backward_orientation = -4.0  # 前进/后退都压住俯仰失衡
 
             # root
             lin_vel_z = -2.0  # base 的 Z 轴线速度惩罚：防止机身跳跃
             ang_vel_xy = -0.15  # 移动时进一步抑制roll/pitch角速度，减少左右摆和前后点头
             orientation = -5.0  # 全局机身水平约束，AMP专家本身几乎是平的
             base_height = -20.0  # 加强全局高度约束，防止低趴局部最优
-            moving_base_height = -15.0  # 运动时额外防止机身下沉，只惩罚低于目标高度
-            stand_base_height = -18.0  # 零速站立专门惩罚低于目标高度，避免原地低趴
+            moving_base_height = -18.0  # 运动时额外防止机身下沉，只惩罚低于目标高度
+            stand_base_height = -20.0  # 零速站立专门惩罚低于目标高度，避免原地低趴
             moving_orientation_flat = -5.0  # 移动时显式压住pitch/roll，保证基座是平的
 
             # 新加
-            stop_orientation = -5.0  # 零速/急停时额外压住身体前倾和侧倾，重点解决停下沉头
+            stop_orientation = -4.0  # 零速/急停时额外压住身体前倾和侧倾，重点解决停下沉头
             stop_ang_vel_xy = -1.0  # 零速/急停时抑制roll/pitch角速度，减少刹停点头
 
             # joint
@@ -302,8 +302,8 @@ class Cc1RoughwtwAmpCfg( LeggedRobotCfg ):
             # feet_mirror = -0.05  # 斜对称腿的关节位置偏差惩罚
             
             # action
-            action_rate = -0.02  # action变化惩罚
-            smoothness = -0.01  # action二阶平滑性惩罚（复杂地形，可适当降低）
+            action_rate = -0.015  # action变化惩罚，略增大以减少后腿突然快抬快落
+            smoothness = -0.012  # action二阶平滑性惩罚，增强慢走观感的连续性
             # hip_action_magnitude = -0.00  # action 中的髋关节hip（0,3,6,9）动作幅度惩罚（防止 > 1.0）
             
             # contact
@@ -323,15 +323,18 @@ class Cc1RoughwtwAmpCfg( LeggedRobotCfg ):
             # upward = 0.0  # 重力投影向下奖励（恢复训练时开启）
             
             # feet
-            raibert_heuristic = 0.0  # -10.0  # Raibert启发式奖励：根据当前base速度和步态周期计算理想的足部位置，奖励与理想位置的接近程度。鼓励足部在适当位置着地以稳定运动。
+            raibert_heuristic = -0.0  # -10.0  # Raibert启发式奖励：根据当前base速度和步态周期计算理想的足部位置，奖励与理想位置的接近程度。鼓励足部在适当位置着地以稳定运动。
             # tracking_contacts_shaped_force = 1.0
             # tracking_contacts_shaped_vel = 1.0
-            tracking_contacts_shaped_force_exp = 0.5  # AMP行走先放软时钟相位约束，减少腿被拉直/强制高抬
-            tracking_contacts_shaped_vel_exp = 0.5  # 支撑脚低滑动仍保留，但不压过专家动作
-            feet_clearance_cmd_linear = -0.5  # 降低足端高度约束权重，避免前腿抬得过高
+            tracking_contacts_shaped_force_exp = 0.2  # AMP行走先放软时钟相位约束，减少腿被拉直/强制高抬
+            tracking_contacts_shaped_vel_exp = 0.2  # 支撑脚低滑动仍保留，但不压过专家动作
+            feet_clearance_cmd_linear = -0.8  # 柔性足端高度约束，过大容易让后腿摆动期出现卡顿
+            front_swing_clearance = -1.0  # 前腿摆动期最低离地高度，减少落地前向后蹭地
+            hind_swing_height_limit = 0.0  # 诊断版先关闭后腿硬限高，避免高度边界导致后腿卡顿
+            hind_swing_z_vel = -0.35  # 后腿摆动期垂直速度过快惩罚，减少正步式直上直下
 
-            anti_trot_diagonal_swing = -0.8  # 惩罚对角腿同时摆动，避免AMP行走塌成trot
-            swing_contact = -2.0  # 明确摆动期提前触地惩罚，降低一步内点地频率
+            anti_trot_diagonal_swing = -0.4  # 惩罚对角腿同时摆动，避免AMP行走塌成trot
+            swing_contact = -1.0  # 明确摆动期提前触地惩罚，降低一步内点地频率
 
 
         reward_curriculum = False
@@ -344,7 +347,7 @@ class Cc1RoughwtwAmpCfg( LeggedRobotCfg ):
         soft_dof_vel_limit = 0.95   # 关节速度软限位：超过最大速度95%时惩罚。保护电机模型不过载
         soft_torque_limit = 0.95    # 关节力矩软限位：超过额定扭矩95%时惩罚。防止仿真数值发散
         base_height_target = 0.42   # 零速目标高度抬高，避免原地站立时机身压得过低
-        stand_base_height_target = 0.44  # 零速站立时目标
+        # stand_base_height_target = 0.44  # 零速站立时目标
         moving_base_height_target = 0.44  # 移动时保持高而平，避免前身沉下去
         moving_height_min_lin_cmd = 0.05
         moving_height_full_lin_cmd = 0.35
@@ -353,8 +356,16 @@ class Cc1RoughwtwAmpCfg( LeggedRobotCfg ):
         feet_height_target_base = -0.28  # 足部距base的 相对距离目标（抬脚高度为0.15 以适应台阶地形）
         feet_height_target_terrain = 0.04  # 足部离地高度目标，避免前腿显式抬得过高
         max_contact_force = 100.    # 四足接触力 > 100N 时触发惩罚的阈值
-        target_foot_height = 0.05  # 降低显式摆腿高度，避免前腿越训越高
-        target_foot_height_yaw = 0.05  # feet height
+        target_foot_height = 0.05  # 降低显式摆腿高度，避免整体抬腿过高
+        feet_clearance_overheight_margin = 0.025  # 轻微收紧高度余量，温和压低后腿高抬
+        feet_clearance_overheight_weight = 1.0  # 轻量增加过高约束，避免后腿抬得过高但不形成硬限高
+        hind_swing_height_limit_height = 0.075  # 若重新开启后腿限高，使用更软的上限
+        hind_swing_height_limit_contact_threshold = 0.35
+        hind_swing_z_vel_max = 0.32  # 后腿摆动期允许的垂直速度，越小越慢但过小会拖脚
+        hind_swing_z_vel_contact_threshold = 0.35
+        front_swing_clearance_height = 0.05  # 前腿还在摆动期时的最低离地高度
+        front_swing_clearance_contact_threshold = 0.35
+        target_foot_height_yaw = 0.04  # feet height
         kappa_gait_probs = 0.07
         gait_force_sigma = 100.
         gait_vel_sigma = 10.
@@ -386,15 +397,6 @@ class Cc1RoughwtwAmpCfg( LeggedRobotCfg ):
         anti_trot_contact_threshold = 1.0
         lateral_pair_contact_threshold = 2.0
         swing_contact_threshold = 0.3
-
-        lateral_pair_touchdown_cooldown_s = 0.20
-        short_contact_min_time_s = 0.10
-        front_contact_min_time_s = 0.12
-        hind_contact_min_time_s = 0.12
-        front_short_contact_weight = 1.3
-        hind_short_contact_weight = 1.2
-        lateral_pair_touchdown_phase_window = 0.10
-        lateral_pair_takeoff_phase_window = 0.08
 
     class normalization:
         class obs_scales:

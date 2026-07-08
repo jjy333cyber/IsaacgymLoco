@@ -2746,6 +2746,11 @@ class LeggedRobotwtw(BaseTask):
         contact_threshold = getattr(self.cfg.rewards, "soft_landing_contact_threshold", 1.0)
         contact = self.contact_forces[:, self.feet_indices, 2] > contact_threshold
         first_contact = contact & ~self.prev_contacts
+        foot_ids = getattr(self.cfg.rewards, "soft_landing_foot_ids", None)
+        if foot_ids is not None:
+            if len(foot_ids) == 0:
+                return torch.zeros(self.num_envs, device=self.device)
+            first_contact = first_contact[:, foot_ids]
 
         max_z_vel = getattr(self.cfg.rewards, "soft_landing_max_z_vel", 0.25)
         max_force = getattr(self.cfg.rewards, "soft_landing_max_force", 80.0)
@@ -2754,6 +2759,8 @@ class LeggedRobotwtw(BaseTask):
         down_vel_excess = torch.clamp(-self.feet_vel[:, :, 2] - max_z_vel, min=0.0)
         force_excess = torch.clamp(self.contact_forces[:, self.feet_indices, 2] - max_force, min=0.0) / max(max_force, 1e-6)
         impact = torch.square(down_vel_excess) + force_weight * torch.square(force_excess)
+        if foot_ids is not None:
+            impact = impact[:, foot_ids]
         return torch.sum(first_contact.float() * impact, dim=1)
 
     def _reward_feet_mirror(self):
@@ -3973,6 +3980,74 @@ class LeggedRobotwtw(BaseTask):
 
         return (
             torch.sum(torch.square(inward_error) * stance_or_landing.float(), dim=1)
+            * self._lateral_gait_motion_mask()
+            * self._tracking_relief_scale()
+        )
+
+    def _reward_front_swing_clearance(self):
+        """Keep front feet off the ground while they are still expected to swing."""
+        front_ids = getattr(self.cfg.rewards, "front_swing_clearance_foot_ids", [0, 1])
+        if len(front_ids) == 0:
+            return torch.zeros(self.num_envs, device=self.device)
+
+        foot_height = self._get_feet_heights()[:, front_ids]
+        desired_contact = self.desired_contact_states[:, front_ids]
+        swing_threshold = getattr(self.cfg.rewards, "front_swing_clearance_contact_threshold", 0.35)
+        target_height = getattr(self.cfg.rewards, "front_swing_clearance_height", 0.065)
+
+        swing_weight = torch.clamp(
+            (swing_threshold - desired_contact) / max(swing_threshold, 1e-6),
+            min=0.0,
+            max=1.0,
+        )
+        clearance_error = torch.square(torch.clamp(target_height - foot_height, min=0.0))
+        return (
+            torch.sum(clearance_error * swing_weight, dim=1)
+            * self._lateral_gait_motion_mask()
+            * self._tracking_relief_scale()
+        )
+
+    def _reward_hind_swing_height_limit(self):
+        """Penalize excessive hind foot height during swing to avoid high lift and hard touchdown."""
+        hind_ids = getattr(self.cfg.rewards, "hind_swing_height_limit_foot_ids", [2, 3])
+        if len(hind_ids) == 0:
+            return torch.zeros(self.num_envs, device=self.device)
+
+        foot_height = self._get_feet_heights()[:, hind_ids]
+        desired_contact = self.desired_contact_states[:, hind_ids]
+        swing_threshold = getattr(self.cfg.rewards, "hind_swing_height_limit_contact_threshold", 0.35)
+        max_height = getattr(self.cfg.rewards, "hind_swing_height_limit_height", 0.07)
+
+        swing_weight = torch.clamp(
+            (swing_threshold - desired_contact) / max(swing_threshold, 1e-6),
+            min=0.0,
+            max=1.0,
+        )
+        height_excess = torch.clamp((foot_height - max_height) / max(max_height, 1e-6), min=0.0)
+        return (
+            torch.sum(torch.square(height_excess) * swing_weight, dim=1)
+            * self._lateral_gait_motion_mask()
+            * self._tracking_relief_scale()
+        )
+
+    def _reward_hind_swing_z_vel(self):
+        """Softly limit hind-foot vertical speed during swing for smoother visual motion."""
+        hind_ids = getattr(self.cfg.rewards, "hind_swing_z_vel_foot_ids", [2, 3])
+        if len(hind_ids) == 0:
+            return torch.zeros(self.num_envs, device=self.device)
+
+        desired_contact = self.desired_contact_states[:, hind_ids]
+        swing_threshold = getattr(self.cfg.rewards, "hind_swing_z_vel_contact_threshold", 0.35)
+        max_z_vel = getattr(self.cfg.rewards, "hind_swing_z_vel_max", 0.35)
+        swing_weight = torch.clamp(
+            (swing_threshold - desired_contact) / max(swing_threshold, 1e-6),
+            min=0.0,
+            max=1.0,
+        )
+
+        z_vel_excess = torch.clamp(torch.abs(self.feet_vel[:, hind_ids, 2]) - max_z_vel, min=0.0)
+        return (
+            torch.sum(torch.square(z_vel_excess) * swing_weight, dim=1)
             * self._lateral_gait_motion_mask()
             * self._tracking_relief_scale()
         )
