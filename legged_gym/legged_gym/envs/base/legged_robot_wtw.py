@@ -2406,8 +2406,8 @@ class LeggedRobotwtw(BaseTask):
         self.last_contacts = contact
         first_contact = (self.feet_air_time > 0.) * contact_filt  # 只考虑从空中首次触地的情况
         self.feet_air_time += self.dt  # 累加 policy 步长（0.02s）
-        air_time_error = -torch.abs(self.feet_air_time - 0.5)
-        rew_airTime = torch.sum(air_time_error * first_contact, dim=1)  # 仅奖励第一次触地，且计算与目标时间0.5s的偏差奖励
+        air_time_error = -torch.abs(self.feet_air_time - self.cfg.rewards.feet_air_time_target)
+        rew_airTime = torch.sum(air_time_error * first_contact, dim=1)  # 仅奖励第一次触地，按配置的目标空中时间计算偏差
         condition = (torch.norm(self.commands[:, :2], dim=1) > 0.2) | (
                     torch.abs(self.commands[:, 2]) > 0.05)  # commands XY方向线速度 > 0.1m/s 或 yaw方向角速度 > 0.05rad/s 时才奖励
         rew_airTime *= condition.float()

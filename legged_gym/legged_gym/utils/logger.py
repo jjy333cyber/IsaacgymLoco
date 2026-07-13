@@ -135,7 +135,18 @@ class Logger:
         if log["projected_gravity_x"]: a.plot(time, log["projected_gravity_x"], label='proj gravity x')
         a.set(xlabel='time [s]', ylabel='rad / unit', title='Base Pitch')
         a.legend()
-        axs[3, 2].axis('off')
+        # plot foot heights relative to terrain
+        a = axs[3, 2]
+        for key, label in [
+            ("FL_height", "FL"),
+            ("FR_height", "FR"),
+            ("HL_height", "HL"),
+            ("HR_height", "HR"),
+        ]:
+            if log[key]:
+                a.plot(time, log[key], label=label)
+        a.set(xlabel='time [s]', ylabel='height [m]', title='Foot Height')
+        a.legend()
         fig.tight_layout()
         plt.show()
 

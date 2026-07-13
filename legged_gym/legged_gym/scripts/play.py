@@ -111,6 +111,12 @@ def _get_base_pitch(env, robot_index):
     return torch.asin(sin_pitch).item()
 
 
+def _get_foot_heights(env, robot_index):
+    if hasattr(env, "_get_feet_heights"):
+        return env._get_feet_heights()[robot_index].detach().cpu().numpy()
+    return env.feet_pos[robot_index, :, 2].detach().cpu().numpy()
+
+
 def _sample_play_commands(env, x_vel=0.3, y_vel=0.0, yaw_vel=0.0):
     if not RANDOM_COMMANDS:
         return (
@@ -204,7 +210,7 @@ def play(args, x_vel=0.3, y_vel=0.0, yaw_vel=0.0):
     logger = Logger(env.dt)
     robot_index = 0 # which robot is used for logging
     joint_index = 1 # which joint is used for logging
-    stop_state_log = 100 # number of steps before plotting states
+    stop_state_log = 200 # number of steps before plotting states
     stop_rew_log = env.max_episode_length + 1 # number of steps before print average episode rewards
     # camera_position = np.array(env_cfg.viewer.pos, dtype=np.float64)
     camera_position = np.array([3, 3, 3], dtype=np.float64)
@@ -236,6 +242,7 @@ def play(args, x_vel=0.3, y_vel=0.0, yaw_vel=0.0):
         base_height = _get_base_height(env, robot_index)
         base_z = env.root_states[robot_index, 2].item()
         base_pitch = _get_base_pitch(env, robot_index)
+        foot_heights = _get_foot_heights(env, robot_index)
 
         if PRINT_BASE_STATE and i % BASE_STATE_PRINT_INTERVAL == 0:
             print(
@@ -277,7 +284,11 @@ def play(args, x_vel=0.3, y_vel=0.0, yaw_vel=0.0):
                     'base_z': base_z,
                     'base_pitch': base_pitch,
                     'projected_gravity_x': env.projected_gravity[robot_index, 0].item(),
-                    'contact_forces_z': env.contact_forces[robot_index, env.feet_indices, 2].cpu().numpy()
+                    'contact_forces_z': env.contact_forces[robot_index, env.feet_indices, 2].cpu().numpy(),
+                    'FL_height': foot_heights[0],
+                    'FR_height': foot_heights[1],
+                    'HL_height': foot_heights[2],
+                    'HR_height': foot_heights[3],
                 }
             )
         elif i==stop_state_log:
@@ -313,4 +324,4 @@ if __name__ == '__main__':
         dict(name="--load_cfg", action="store_true", default=False, help="use the config from the logdir"),
     ])
     # play(args)
-    play(args, x_vel=0.4, y_vel=0.0, yaw_vel=0.0)
+    play(args, x_vel=0.3, y_vel=0.0, yaw_vel=0.0)
